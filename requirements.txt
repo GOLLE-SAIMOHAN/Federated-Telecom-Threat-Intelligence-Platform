@@ -1,0 +1,10 @@
+# Core data and machine-learning dependencies for the Python layer.
+# Versions are pinned for reproducible Phase 1 environment setup.
+numpy==2.2.6
+pandas==2.2.3
+scikit-learn==1.6.1
+flwr==1.17.0
+
+# Test and quality tooling used by later Python phases.
+pytest==8.3.5
+ruff==0.11.2

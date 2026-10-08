@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "federated-telecom-threat-intelligence"
+version = "0.1.0"
+description = "Research prototype for federated telecom threat detection and CTI."
+requires-python = ">=3.11"
+dependencies = [
+  "numpy==2.2.6",
+  "pandas==2.2.3",
+  "scikit-learn==1.6.1",
+  "flwr==1.17.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["ml/tests", "operators/tests", "federated-server/tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

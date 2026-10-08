@@ -1,0 +1,11 @@
+{
+  "dataset_path": "data/raw/5g-intrusion",
+  "train_dataset_path": "data/raw/5g-intrusion/train_data.csv",
+  "test_dataset_path": "data/raw/5g-intrusion/test_data.csv",
+  "label_column": "attack",
+  "test_size": 0.2,
+  "random_seed": 42,
+  "partition_mode": "iid",
+  "non_iid_concentration": 0.5,
+  "output_dir": "data/processed"
+}
