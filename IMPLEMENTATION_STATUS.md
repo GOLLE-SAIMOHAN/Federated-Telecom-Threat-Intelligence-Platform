@@ -57,6 +57,7 @@
 - Phase 4 federated and data-pipeline tests: `9 passed`.
 - Threat Intelligence and regression tests: `11 passed`.
 - CTI summary tests: passed.
+- Backend integration tests and API validation: passed.
 
 ## Known issues
 
@@ -116,6 +117,12 @@
   `data/processed/threat_summary.json` is the primary backend/dashboard
   integration artifact, aggregated by operator, attack type, severity, and
   status.
+- Added minimal Node.js/Express REST integration for health, system status,
+  operators, federated metrics, threat summary, bounded threat listing, and
+  bounded threat lookup.
+- Backend reads the existing processed artifacts without adding ML or CTI
+  logic. MongoDB persistence is environment-configured and stores the summary
+  plus at most 1,000 detailed threat records.
 - Full npm audits report transitive development-tool advisories in the
   frontend/backend dependency trees; these do not affect production-only
   dependencies at this foundation stage and should be reassessed when runtime
@@ -123,8 +130,7 @@
 
 ## Pending work
 
-- Review `data/processed/threat_events.json` before beginning backend
-  integration.
+- Review the backend API before beginning React/dashboard integration.
 
 Follow the phase order in `PROJECT_SPEC.md`. Do not begin a later phase until
 the current phase has been implemented and tested.
