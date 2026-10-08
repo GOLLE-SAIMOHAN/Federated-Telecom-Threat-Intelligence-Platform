@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 2C — train/test leakage audit verified and corrected**
+**Phase 3 — centralized ML baseline**
 
 ## Completed
 
@@ -55,6 +55,7 @@
 - Phase 2A inspection tests: `3 passed`.
 - Phase 2B preprocessing and partition tests: `4 passed`.
 - Phase 2C leakage audit regression tests: `5 passed`.
+- Phase 3 baseline and data-pipeline tests: `6 passed`.
 
 ## Known issues
 
@@ -89,6 +90,12 @@
 - Saved the fitted preprocessing and label-encoding artifacts, transformed test
   data, isolated IID/non-IID operator partitions, and reports under
   `data/processed`.
+- Phase 3 centralized baseline completed with scikit-learn
+  `SGDClassifier(loss="log_loss", class_weight="balanced", random_state=42)`.
+- The model was trained on the leakage-free IID operator partitions and
+  evaluated only on the untouched test transformation produced by Phase 2.
+- Saved the model, experiment configuration, and evaluation results under
+  `data/processed`.
 - Full npm audits report transitive development-tool advisories in the
   frontend/backend dependency trees; these do not affect production-only
   dependencies at this foundation stage and should be reassessed when runtime
@@ -96,8 +103,8 @@
 
 ## Pending work
 
-- Review `data/processed/preprocessing_partition_report.json` before beginning
-  model-training work. It records zero remaining exact train/test overlap.
+- Review `data/processed/centralized_baseline_results.json` before beginning
+  federated-learning work.
 
 Follow the phase order in `PROJECT_SPEC.md`. Do not begin a later phase until
 the current phase has been implemented and tested.

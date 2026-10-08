@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
 
 from ml.data.pipeline import (
     DatasetConfig,
@@ -12,6 +14,7 @@ from ml.data.pipeline import (
     load_dataset,
     preprocess_and_partition,
 )
+from ml.centralized.baseline import run_baseline
 
 
 DATASET_CONFIG = Path("configs/dataset.json")
@@ -120,3 +123,31 @@ def test_leakage_cleanup_removes_exact_overlap_but_keeps_train_only_duplicates(
     assert audit["overlap_by_attack_class"] == {"benign": 2}
     assert len(cleaned) == 2
     assert exact_duplicate_overlap(cleaned, test) == 0
+
+
+def test_baseline_uses_saved_artifacts_without_refitting(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    partition_dir = tmp_path / "operator_partitions"
+    artifact_dir.mkdir()
+    partition_dir.mkdir()
+    encoder = LabelEncoder().fit(["benign", "scan"])
+    import joblib
+
+    joblib.dump({"label_encoder": encoder}, artifact_dir / "preprocessing.joblib")
+    for name in ("a", "b", "c", "d"):
+        np.savez(
+            partition_dir / f"iid_operator_{name}.npz",
+            features=np.array([[0.0, 1.0], [1.0, 0.0]]),
+            labels=np.array([0, 1]),
+        )
+    np.savez(
+        tmp_path / "test_preprocessed.npz",
+        features=np.array([[0.0, 1.0], [1.0, 0.0]]),
+        labels=np.array([0, 1]),
+    )
+
+    result = run_baseline(tmp_path)
+
+    assert result["model"] == "sklearn.linear_model.SGDClassifier"
+    assert result["metrics"]["accuracy"] >= 0
+    assert (tmp_path / "centralized_baseline_model.joblib").exists()
