@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 4 — federated learning**
+**Threat Intelligence layer**
 
 ## Completed
 
@@ -36,7 +36,6 @@
 
 - Dataset loading, validation, preprocessing, and operator partitioning.
 - Centralized or local machine-learning models.
-- Threat detection and CTI generation/propagation.
 - Node/Express APIs and MongoDB persistence.
 - React pages and dashboard integration.
 - Docker services and end-to-end orchestration.
@@ -56,6 +55,7 @@
 - Phase 2C leakage audit regression tests: `5 passed`.
 - Phase 3 baseline and data-pipeline tests: `6 passed`.
 - Phase 4 federated and data-pipeline tests: `9 passed`.
+- Threat Intelligence and regression tests: `11 passed`.
 
 ## Known issues
 
@@ -103,6 +103,13 @@
 - A real three-round IID experiment was run and evaluated on the untouched
   test transformation. Reports and model parameters are saved under
   `data/processed`.
+- Threat Intelligence layer completed using the saved federated IID model.
+- Local predictions from each of the four processed operator partitions are
+  converted into structured threat records; benign predictions are not emitted.
+- Threat records contain only threat metadata and are propagated to the other
+  three simulated operators without feature arrays, labels, or raw records.
+- A real run generated 426,479 threat events and saved event and propagation
+  files under `data/processed`.
 - Full npm audits report transitive development-tool advisories in the
   frontend/backend dependency trees; these do not affect production-only
   dependencies at this foundation stage and should be reassessed when runtime
@@ -110,8 +117,8 @@
 
 ## Pending work
 
-- Review `data/processed/federated_iid_report.json` before beginning the next
-  phase.
+- Review `data/processed/threat_events.json` before beginning backend
+  integration.
 
 Follow the phase order in `PROJECT_SPEC.md`. Do not begin a later phase until
 the current phase has been implemented and tested.
