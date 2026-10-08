@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 3 — centralized ML baseline**
+**Phase 4 — federated learning**
 
 ## Completed
 
@@ -36,7 +36,6 @@
 
 - Dataset loading, validation, preprocessing, and operator partitioning.
 - Centralized or local machine-learning models.
-- Federated learning, Flower server, FedAvg, and model exchange.
 - Threat detection and CTI generation/propagation.
 - Node/Express APIs and MongoDB persistence.
 - React pages and dashboard integration.
@@ -56,6 +55,7 @@
 - Phase 2B preprocessing and partition tests: `4 passed`.
 - Phase 2C leakage audit regression tests: `5 passed`.
 - Phase 3 baseline and data-pipeline tests: `6 passed`.
+- Phase 4 federated and data-pipeline tests: `9 passed`.
 
 ## Known issues
 
@@ -96,6 +96,13 @@
   evaluated only on the untouched test transformation produced by Phase 2.
 - Saved the model, experiment configuration, and evaluation results under
   `data/processed`.
+- Phase 4 federated learning completed with four Flower `NumPyClient`
+  clients and Flower `FedAvg` aggregation weighted by local sample count.
+- Clients train only on their own saved transformed IID or non-IID operator
+  partition; only `coef_` and `intercept_` are exchanged.
+- A real three-round IID experiment was run and evaluated on the untouched
+  test transformation. Reports and model parameters are saved under
+  `data/processed`.
 - Full npm audits report transitive development-tool advisories in the
   frontend/backend dependency trees; these do not affect production-only
   dependencies at this foundation stage and should be reassessed when runtime
@@ -103,8 +110,8 @@
 
 ## Pending work
 
-- Review `data/processed/centralized_baseline_results.json` before beginning
-  federated-learning work.
+- Review `data/processed/federated_iid_report.json` before beginning the next
+  phase.
 
 Follow the phase order in `PROJECT_SPEC.md`. Do not begin a later phase until
 the current phase has been implemented and tested.
