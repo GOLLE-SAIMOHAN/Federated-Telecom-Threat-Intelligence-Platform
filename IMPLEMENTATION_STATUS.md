@@ -56,6 +56,7 @@
 - Phase 3 baseline and data-pipeline tests: `6 passed`.
 - Phase 4 federated and data-pipeline tests: `9 passed`.
 - Threat Intelligence and regression tests: `11 passed`.
+- CTI summary tests: passed.
 
 ## Known issues
 
@@ -108,8 +109,13 @@
   converted into structured threat records; benign predictions are not emitted.
 - Threat records contain only threat metadata and are propagated to the other
   three simulated operators without feature arrays, labels, or raw records.
-- A real run generated 426,479 threat events and saved event and propagation
-  files under `data/processed`.
+- The generated events are explicitly labeled as simulated,
+  model-generated detection events; they are not claimed to be real-time
+  attacks.
+- Detailed events remain available for local analysis, while
+  `data/processed/threat_summary.json` is the primary backend/dashboard
+  integration artifact, aggregated by operator, attack type, severity, and
+  status.
 - Full npm audits report transitive development-tool advisories in the
   frontend/backend dependency trees; these do not affect production-only
   dependencies at this foundation stage and should be reassessed when runtime

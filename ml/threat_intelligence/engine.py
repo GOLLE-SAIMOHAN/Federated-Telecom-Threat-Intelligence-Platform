@@ -26,6 +26,7 @@ class ThreatRecord:
     source_operator: str
     model_version: str
     status: str
+    event_type: str = "simulated_model_generated_detection"
 
 
 def _severity(confidence: float) -> str:
@@ -144,9 +145,59 @@ class ThreatIntelligenceEngine:
             )
         return events
 
-    def save(self, records: list[ThreatRecord]) -> tuple[Path, Path]:
+    @staticmethod
+    def aggregate(records: Iterable[ThreatRecord]) -> dict[str, Any]:
+        groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        total = 0
+        for record in records:
+            total += 1
+            key = (
+                record.source_operator,
+                record.attack_type,
+                record.severity,
+                record.status,
+            )
+            group = groups.setdefault(
+                key,
+                {
+                    "operator": record.source_operator,
+                    "attack_type": record.attack_type,
+                    "severity": record.severity,
+                    "status": record.status,
+                    "event_count": 0,
+                    "confidence_sum": 0.0,
+                },
+            )
+            group["event_count"] += 1
+            group["confidence_sum"] += record.confidence
+
+        summaries = []
+        for group in sorted(groups.values(), key=lambda item: (
+            item["operator"],
+            item["attack_type"],
+            item["severity"],
+            item["status"],
+        )):
+            count = group.pop("event_count")
+            confidence_sum = group.pop("confidence_sum")
+            summaries.append(
+                {
+                    **group,
+                    "event_count": count,
+                    "average_confidence": confidence_sum / count,
+                }
+            )
+        return {
+            "artifact_type": "simulated_model_generated_detection_summary",
+            "event_count": total,
+            "grouped_by": ["operator", "attack_type", "severity", "status"],
+            "groups": summaries,
+        }
+
+    def save(self, records: list[ThreatRecord]) -> tuple[Path, Path, Path]:
         threat_path = self.processed_dir / "threat_events.json"
         propagation_path = self.processed_dir / "threat_propagation.json"
+        summary_path = self.processed_dir / "threat_summary.json"
         threat_path.write_text(
             json.dumps([asdict(record) for record in records], indent=2),
             encoding="utf-8",
@@ -155,11 +206,23 @@ class ThreatIntelligenceEngine:
             json.dumps(self.propagate(records), indent=2),
             encoding="utf-8",
         )
-        return threat_path, propagation_path
+        summary_path.write_text(
+            json.dumps(self.aggregate(records), indent=2),
+            encoding="utf-8",
+        )
+        return threat_path, propagation_path, summary_path
 
 
 if __name__ == "__main__":
     engine = ThreatIntelligenceEngine()
     events = engine.detect_all()
     paths = engine.save(events)
-    print(json.dumps({"event_count": len(events), "files": [str(path) for path in paths]}))
+    print(
+        json.dumps(
+            {
+                "event_count": len(events),
+                "artifact_type": "simulated_model_generated_detection",
+                "files": [str(path) for path in paths],
+            }
+        )
+    )
