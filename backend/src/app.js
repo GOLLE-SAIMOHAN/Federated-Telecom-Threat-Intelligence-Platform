@@ -22,7 +22,13 @@ function createOperators(summary) {
 export function createApp({ artifacts, mongoStore }) {
   const app = express();
   app.disable("x-powered-by");
-  app.use(cors());
+  const configuredOrigins = process.env.CORS_ORIGIN
+    ?.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  app.use(cors({
+    origin: configuredOrigins?.length ? configuredOrigins : true,
+  }));
   app.use(express.json({ limit: "64kb" }));
 
   app.get("/api/health", (_request, response) => {

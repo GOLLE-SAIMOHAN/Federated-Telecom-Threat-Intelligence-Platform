@@ -3,7 +3,7 @@ import { createApp } from "./app.js";
 import { loadArtifacts } from "./artifactStore.js";
 import { MongoStore } from "./mongoStore.js";
 
-const port = Number(process.env.BACKEND_PORT ?? 3000);
+const port = Number(process.env.PORT ?? process.env.BACKEND_PORT ?? 3000);
 const artifacts = await loadArtifacts();
 const mongoStore = new MongoStore({
   uri: process.env.MONGODB_URI,
@@ -12,7 +12,7 @@ const mongoStore = new MongoStore({
 await mongoStore.connect();
 await mongoStore.persist(artifacts);
 
-const server = createApp({ artifacts, mongoStore }).listen(port, () => {
+const server = createApp({ artifacts, mongoStore }).listen(port, "0.0.0.0", () => {
   console.log(`Backend listening on port ${port}`);
 });
 

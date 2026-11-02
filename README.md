@@ -72,6 +72,38 @@ Open `http://localhost:5173`. The backend API is available at
 `/centralized`, `/federated`, `/experiments`, `/operators`, and the honest
 empty-state threat endpoints.
 
+## Render deployment
+
+The root [`render.yaml`](render.yaml) defines separate backend and static
+frontend services. In Render, create a **Blueprint** from this repository and
+review the two services before applying it.
+
+For the backend service, verify:
+
+- Root Directory: `backend`
+- Runtime: Node
+- Build Command: `npm ci`
+- Start Command: `npm start`
+- Health Check Path: `/api/health`
+- `CORS_ORIGIN`: the exact deployed frontend URL, for example
+  `https://your-frontend.onrender.com`
+
+For the frontend service, verify:
+
+- Root Directory: `frontend`
+- Runtime: Static Site
+- Build Command: `npm ci && npm run build`
+- Publish Directory: `dist`
+- `VITE_API_URL`: the exact deployed backend API base URL, for example
+  `https://your-backend.onrender.com/api`
+
+The Blueprint marks both URL variables as secret dashboard inputs. After
+Render assigns the real service URLs, enter those actual URLs in the
+corresponding service settings and redeploy the frontend after setting
+`VITE_API_URL`. Do not guess or commit Render subdomains. The backend accepts
+`PORT` from Render and binds to `0.0.0.0`; local development continues to use
+`BACKEND_PORT` or port 3000 and the frontend's localhost API fallback.
+
 ## Configuration
 
 Copy `.env.example` to `.env` for local development. Do not commit `.env` or

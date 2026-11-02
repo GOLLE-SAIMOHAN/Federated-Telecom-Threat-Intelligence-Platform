@@ -60,6 +60,9 @@
 - Backend integration tests and API validation: passed.
 - Backend startup and dashboard endpoint probes: passed.
 - Frontend production build: passed.
+- Render Blueprint added for separate backend and static frontend services.
+- Render deployment configuration validated locally; no external deployment
+  was performed.
 
 ## Known issues
 
