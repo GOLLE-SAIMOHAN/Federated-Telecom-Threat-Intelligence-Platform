@@ -1,8 +1,26 @@
-import React, { StrictMode, useEffect, useState } from "react";
+import React, { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000/api";
+const navigation = [
+  ["overview", "Overview"],
+  ["experiments", "Experiments"],
+  ["operators", "Operators"],
+  ["performance", "Model Performance"],
+  ["workflow", "How It Works"],
+  ["threats", "Threat Intelligence"],
+];
+const workflowStages = [
+  ["ingestion", "01", "5G-NIDD ingestion", "CSV telemetry is loaded through the existing inspection configuration.", "Python / pandas", "train_data.csv and test_data.csv"],
+  ["preprocessing", "02", "Preprocessing and leakage removal", "Training-only fitting, missing-value handling, encoding, scaling and exact overlap removal protect evaluation integrity.", "scikit-learn Pipeline", "preprocessing.joblib and leakage report"],
+  ["partitioning", "03", "IID and Non-IID partitions", "The cleaned training set is split into four reproducible operator partitions for both distribution strategies.", "NumPy / deterministic seed 42", "iid_operator_{a,b,c,d}.npz and non_iid_operator_{a,b,c,d}.npz"],
+  ["baseline", "04", "Centralized Random Forest", "A centralized Random Forest provides the reference baseline. It is a separate experiment from federated SGD.", "RandomForestClassifier", "centralized_baseline_results.json"],
+  ["clients", "05", "Four local federated clients", "Each simulated client trains on its own local partition and keeps feature and label arrays in-process.", "Flower NumPyClient", "four logical operator clients"],
+  ["aggregation", "06", "Flower FedAvg across five rounds", "FedAvg combines model parameters weighted by client sample count; raw records are not sent as updates.", "Flower FedAvg", "federated_iid_rounds_5_report.json and federated_non_iid_rounds_5_report.json"],
+  ["evaluation", "07", "Global model evaluation", "The final global model is evaluated against the untouched test artifact after round five.", "scikit-learn metrics", "final_metrics and confusion matrix"],
+  ["dashboard", "08", "Results on this dashboard", "This interface reads the tracked demo snapshot derived from the verified experiment reports.", "Express API + React", "backend/data/demo-artifacts.json"],
+];
 
 async function loadDashboard() {
   const paths = ["health", "system/status", "operators", "experiments", "threats/summary"];
@@ -12,48 +30,97 @@ async function loadDashboard() {
   return Object.fromEntries(paths.map((path, index) => [path, values[index]]));
 }
 
-function Metric({ label, value }) {
-  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+function Metric({ label, value, detail }) {
+  return <div className="metric"><span>{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</div>;
 }
 
-function Experiment({ title, report }) {
-  const metrics = report?.final_metrics ?? {};
+function SectionHeading({ eyebrow, title, action }) {
+  return <div className="section-title"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div>{action}</div>;
+}
+
+function ConfusionMatrix({ matrix, labels }) {
+  if (!matrix?.length) return <p className="muted-copy">No confusion matrix is available for this round.</p>;
   return (
-    <section className="panel">
-      <div className="panel-heading"><div><p className="eyebrow">{title}</p><h2>Five-round performance</h2></div><span className="badge">{report?.configuration?.rounds ?? 0} rounds</span></div>
-      <div className="metrics">
-        <Metric label="Accuracy" value={`${((metrics.accuracy ?? 0) * 100).toFixed(2)}%`} />
-        <Metric label="Macro-F1" value={`${((metrics.macro_f1 ?? 0) * 100).toFixed(2)}%`} />
-        <Metric label="Weighted-F1" value={`${((metrics.weighted_f1 ?? 0) * 100).toFixed(2)}%`} />
-      </div>
-      <div className="rounds">
-        {(report?.rounds ?? []).map((round) => (
-          <div className="round" key={round.round}><span>R{round.round}</span><div className="bar"><i style={{ width: `${(round.validation_metrics.accuracy ?? 0) * 100}%` }} /></div><b>{((round.validation_metrics.accuracy ?? 0) * 100).toFixed(1)}%</b></div>
-        ))}
-      </div>
-    </section>
+    <div className="matrix-wrap">
+      <table className="matrix"><thead><tr><th>Actual / Pred.</th>{labels.map((label) => <th key={label} title={label}>{label.slice(0, 7)}</th>)}</tr></thead>
+        <tbody>{matrix.map((row, rowIndex) => <tr key={labels[rowIndex] ?? rowIndex}><th title={labels[rowIndex]}>{(labels[rowIndex] ?? `Class ${rowIndex}`).slice(0, 12)}</th>{row.map((value, colIndex) => <td className={value ? (rowIndex === colIndex ? "matrix-hit" : "matrix-miss") : ""} key={`${rowIndex}-${colIndex}`}>{value}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
   );
+}
+
+function RoundPanel({ report, labels }) {
+  const [roundNumber, setRoundNumber] = useState(1);
+  const round = report?.rounds?.find((item) => item.round === Number(roundNumber)) ?? report?.rounds?.[0];
+  const metrics = round?.validation_metrics ?? {};
+  return (
+    <div className="panel round-panel">
+      <div className="panel-heading"><div><p className="eyebrow">Local validation</p><h3>Round {round?.round ?? "-"} detail</h3></div>
+        <label className="select-label">Round <select value={roundNumber} onChange={(event) => setRoundNumber(event.target.value)}>{(report?.rounds ?? []).map((item) => <option value={item.round} key={item.round}>{item.round}</option>)}</select></label>
+      </div>
+      <div className="metrics compact"><Metric label="Accuracy" value={`${((metrics.accuracy ?? 0) * 100).toFixed(2)}%`} /><Metric label="Macro-F1" value={`${((metrics.macro_f1 ?? 0) * 100).toFixed(2)}%`} /><Metric label="Weighted-F1" value={`${((metrics.weighted_f1 ?? 0) * 100).toFixed(2)}%`} /></div>
+      <p className="muted-copy">{round?.validation_rows?.toLocaleString() ?? 0} validation rows aggregated from local confusion-matrix counts.</p>
+      <ConfusionMatrix matrix={round?.validation_confusion_matrix} labels={labels} />
+    </div>
+  );
+}
+
+function ExperimentCard({ title, report, labels, expanded }) {
+  const metrics = report?.final_metrics ?? {};
+  return <article className="panel experiment-card"><div className="panel-heading"><div><p className="eyebrow">{title}</p><h3>{report?.configuration?.model?.split(".").pop() ?? "Federated model"}</h3></div><span className="badge">{report?.configuration?.rounds ?? 0} rounds</span></div>
+    <div className="metrics"><Metric label="Accuracy" value={`${((metrics.accuracy ?? 0) * 100).toFixed(2)}%`} /><Metric label="Macro-F1" value={`${((metrics.macro_f1 ?? 0) * 100).toFixed(2)}%`} /><Metric label="Weighted-F1" value={`${((metrics.weighted_f1 ?? 0) * 100).toFixed(2)}%`} /></div>
+    <div className="rounds">{(report?.rounds ?? []).map((round) => <div className="round" key={round.round}><span>R{round.round}</span><div className="bar"><i style={{ width: `${(round.validation_metrics.accuracy ?? 0) * 100}%` }} /></div><b>{((round.validation_metrics.accuracy ?? 0) * 100).toFixed(1)}%</b></div>)}</div>
+    {expanded && <RoundPanel report={report} labels={labels} />}
+  </article>;
+}
+
+function Operators({ operators }) {
+  const [selected, setSelected] = useState(null);
+  const current = operators.find((operator) => operator.id === selected);
+  return <section id="operators" className="section"><SectionHeading eyebrow="Federation topology" title="Simulated operator clients" action={<span className="badge">4 clients · in-process simulation</span>} />
+    <div className="operators">{operators.map((operator) => <button className={`operator ${selected === operator.id ? "selected" : ""}`} onClick={() => setSelected(operator.id)} key={operator.id}><div className="operator-head"><span className="node" /><h3>{operator.name}</h3><span className="status">{operator.status}</span></div><p>{operator.iid_rows.toLocaleString()} IID records</p><small>{operator.non_iid_rows.toLocaleString()} Non-IID · {operator.iid_classes} classes</small></button>)}</div>
+    {current && <div className="panel operator-detail"><div><p className="eyebrow">Selected client</p><h3>{current.name}</h3><p>This is a logical telecom operator client, not an independently deployed service. Training data remains inside the client object during the in-process Flower simulation.</p></div><div className="detail-grid"><Metric label="IID partition" value={current.iid_rows.toLocaleString()} /><Metric label="Non-IID partition" value={current.non_iid_rows.toLocaleString()} /><Metric label="Classes" value={current.iid_classes} /></div><div className="callout">Client sends model parameters and scalar metrics to FedAvg, never raw feature arrays, labels or source indices.</div></div>}
+  </section>;
+}
+
+function Workflow() {
+  const [active, setActive] = useState(workflowStages[0][0]);
+  const stage = workflowStages.find((item) => item[0] === active) ?? workflowStages[0];
+  return <section id="workflow" className="section"><SectionHeading eyebrow="Research workflow" title="From telecom data to collaborative detection" /><div className="workflow-layout"><div className="workflow-list">{workflowStages.map((item) => <button className={`workflow-step ${active === item[0] ? "active" : ""}`} onClick={() => setActive(item[0])} key={item[0]}><b>{item[1]}</b><span>{item[2]}</span></button>)}</div><div className="panel workflow-detail"><p className="eyebrow">Stage {stage[1]}</p><h3>{stage[2]}</h3><p>{stage[3]}</p><div className="detail-row"><span>Technology</span><strong>{stage[4]}</strong></div><div className="detail-row"><span>Output / artifact</span><strong>{stage[5]}</strong></div></div></div><div className="architecture"><div className="arch-node">Operator A</div><div className="arch-node">Operator B</div><div className="arch-node">Operator C</div><div className="arch-node">Operator D</div><div className="arch-line" /><div className="arch-center"><strong>FedAvg coordinator</strong><small>5 communication rounds</small></div><div className="arch-arrow">Global model → local clients</div></div><p className="muted-copy privacy-note">Privacy boundary: raw records remain local to each simulated client. This is privacy-preserving parameter exchange in an in-process simulation, not independently isolated operator infrastructure.</p></section>;
+}
+
+function Performance({ centralized, iid, nonIid, labels }) {
+  const rows = [["Centralized Random Forest", centralized?.metrics], ["Federated IID SGDClassifier", iid?.final_metrics], ["Federated Non-IID SGDClassifier", nonIid?.final_metrics]];
+  const classRows = Object.entries(centralized?.per_class ?? {});
+  return <section id="performance" className="section"><SectionHeading eyebrow="Model performance" title="Comparable experiment results" /><div className="comparison-table panel"><table><thead><tr><th>Experiment</th><th>Accuracy</th><th>Macro-F1</th><th>Weighted-F1</th></tr></thead><tbody>{rows.map(([name, metrics]) => <tr key={name}><th>{name}</th><td>{((metrics?.accuracy ?? 0) * 100).toFixed(2)}%</td><td>{((metrics?.macro_f1 ?? 0) * 100).toFixed(2)}%</td><td>{((metrics?.weighted_f1 ?? 0) * 100).toFixed(2)}%</td></tr>)}</tbody></table></div><div className="grid performance-grid"><div className="panel"><h3>Centralized per-class performance</h3><div className="class-list">{classRows.map(([name, metric]) => <div className="class-row" key={name}><span>{name}</span><div className="bar"><i style={{ width: `${(metric.f1 ?? 0) * 100}%` }} /></div><b>{((metric.f1 ?? 0) * 100).toFixed(1)}%</b></div>)}</div></div><div className="panel explanation"><h3>How to read these metrics</h3><p><strong>Accuracy</strong> is the share of all predictions that are correct. It can look high when benign examples dominate the dataset.</p><p><strong>Macro-F1</strong> averages F1 equally across classes, so rare attack classes matter as much as common classes.</p><p className="callout">Random Forest is the centralized baseline. Federated results use SGDClassifier with Flower FedAvg; they are separate model experiments, not identical-algorithm comparisons.</p></div></div></section>;
 }
 
 function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
-  useEffect(() => { loadDashboard().then(setData).catch((reason) => setError(reason.message)); }, []);
-  if (error) return <main className="shell"><div className="error"><h1>Dashboard unavailable</h1><p>{error}</p><p>Start the backend on port 3000 and refresh.</p></div></main>;
-  if (!data) return <main className="shell"><div className="loading">Loading security telemetry…</div></main>;
+  const [activeSection, setActiveSection] = useState("overview");
+  const [experimentMode, setExperimentMode] = useState("iid");
+  const [loading, setLoading] = useState(true);
+  const refresh = () => { setLoading(true); setError(""); loadDashboard().then(setData).catch((reason) => setError(reason.message)).finally(() => setLoading(false)); };
+  useEffect(refresh, []);
+  const labels = useMemo(() => Object.keys(data?.experiments?.centralized?.results?.per_class ?? {}), [data]);
+  if (loading && !data) return <main className="shell"><div className="loading">Loading verified experiment telemetry...</div></main>;
+  if (error && !data) return <main className="shell"><div className="error"><h1>Dashboard unavailable</h1><p>{error}</p><button className="button" onClick={refresh}>Retry</button></div></main>;
   const centralized = data.experiments.centralized.results;
   const federated = data.experiments.federated;
-  return (
-    <main className="shell">
-      <header className="topbar"><div className="brand"><span className="logo">FT</span><div><strong>Federated Threat Intel</strong><small>5G cybersecurity operations</small></div></div><div className="health"><span /> API {data.health.status} · {data["system/status"].federated.rounds} rounds</div></header>
-      <section className="hero"><p className="eyebrow">Operational overview</p><h1>Collaborative defense, without centralized raw data.</h1><p className="subtitle">A research-grade view of the centralized baseline and four simulated telecom operators running Flower FedAvg.</p></section>
-      <section className="grid overview"><div className="panel accent"><p className="eyebrow">Centralized baseline</p><h2>Random Forest</h2><div className="metrics"><Metric label="Accuracy" value={`${(centralized.metrics.accuracy * 100).toFixed(2)}%`} /><Metric label="Macro-F1" value={`${(centralized.metrics.macro_f1 * 100).toFixed(2)}%`} /></div></div><div className="panel"><p className="eyebrow">Federated model</p><h2>SGDClassifier · FedAvg</h2><div className="metrics"><Metric label="IID F1" value={`${(federated.iid.final_metrics.macro_f1 * 100).toFixed(2)}%`} /><Metric label="Non-IID F1" value={`${(federated.non_iid.final_metrics.macro_f1 * 100).toFixed(2)}%`} /></div></div></section>
-      <section className="section"><div className="section-title"><p className="eyebrow">Federation topology</p><h2>Simulated operators</h2></div><div className="operators">{data.operators.operators.map((operator) => <article className="operator" key={operator.id}><div className="operator-head"><span className="node" /><h3>{operator.name}</h3><span className="status">{operator.status}</span></div><p>{operator.iid_rows.toLocaleString()} IID local records</p><small>{operator.non_iid_rows.toLocaleString()} non-IID · {operator.iid_classes} classes</small></article>)}</div></section>
-      <section className="grid experiments"><Experiment title="IID federation" report={federated.iid} /><Experiment title="Non-IID federation" report={federated.non_iid} /></section>
-      <section className="panel threat"><div className="panel-heading"><div><p className="eyebrow">Threat intelligence</p><h2>Detection events</h2></div><span className="badge muted">No events available</span></div><p>{data["threats/summary"].message}</p></section>
-      <footer>Source: verified local experiment artifacts · In-process simulation · No raw operator records exposed</footer>
-    </main>
-  );
+  const jump = (id) => { setActiveSection(id); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); };
+  return <main className="shell">
+    <header className="topbar"><div className="brand"><span className="logo">FT</span><div><strong>Federated Threat Intel</strong><small>5G cybersecurity operations</small></div></div><div className="header-actions"><div className="health"><span /> API {data.health.status} · {data["system/status"].federated.rounds} rounds</div><button className="button ghost" onClick={refresh}>{loading ? "Refreshing..." : "Refresh data"}</button></div></header>
+    <nav className="nav">{navigation.map(([id, label]) => <button className={activeSection === id ? "active" : ""} onClick={() => jump(id)} key={id}>{label}</button>)}</nav>
+    <section id="overview" className="hero"><p className="eyebrow">Academic project demonstration</p><h1>Collaborative defense, without centralized raw data.</h1><p className="subtitle">Explore the verified centralized baseline, five-round Flower FedAvg experiments, simulated operator clients and the complete 5G threat-detection workflow.</p><div className="hero-actions"><button className="button" onClick={() => jump("experiments")}>Explore experiments</button><button className="button ghost" onClick={() => jump("workflow")}>How it works</button></div></section>
+    <section className="grid overview-cards"><div className="panel accent"><p className="eyebrow">Centralized baseline</p><h2>Random Forest</h2><div className="metrics"><Metric label="Accuracy" value={`${(centralized.metrics.accuracy * 100).toFixed(2)}%`} /><Metric label="Macro-F1" value={`${(centralized.metrics.macro_f1 * 100).toFixed(2)}%`} /></div></div><div className="panel"><p className="eyebrow">Federated comparison</p><h2>SGDClassifier · FedAvg</h2><div className="metrics"><Metric label="IID F1" value={`${(federated.iid.final_metrics.macro_f1 * 100).toFixed(2)}%`} /><Metric label="Non-IID F1" value={`${(federated.non_iid.final_metrics.macro_f1 * 100).toFixed(2)}%`} /></div></div></section>
+    <section id="experiments" className="section"><SectionHeading eyebrow="Experiment comparison" title="Five-round federation" action={<div className="segmented"><button className={experimentMode === "iid" ? "active" : ""} onClick={() => setExperimentMode("iid")}>IID detail</button><button className={experimentMode === "non_iid" ? "active" : ""} onClick={() => setExperimentMode("non_iid")}>Non-IID detail</button></div>} /><div className="experiment-grid"><ExperimentCard title="IID federation" report={federated.iid} labels={labels} expanded={experimentMode === "iid"} /><ExperimentCard title="Non-IID federation" report={federated.non_iid} labels={labels} expanded={experimentMode === "non_iid"} /></div></section>
+    <Operators operators={data.operators.operators} />
+    <Performance centralized={centralized} iid={federated.iid} nonIid={federated.non_iid} labels={labels} />
+    <Workflow />
+    <section id="threats" className="section"><SectionHeading eyebrow="Threat intelligence" title="Detection events" action={<span className="badge muted">{data["threats/summary"].available ? "Available" : "Empty state"}</span>} /><div className="panel threat"><h3>{data["threats/summary"].available ? "Available threat artifacts" : "No threat event artifacts are currently available."}</h3><p>{data["threats/summary"].message}</p></div></section>
+    <footer>Source: verified local experiment artifacts · In-process simulation · No raw operator records exposed</footer>
+  </main>;
 }
 
 createRoot(document.getElementById("root")).render(<StrictMode><App /></StrictMode>);
