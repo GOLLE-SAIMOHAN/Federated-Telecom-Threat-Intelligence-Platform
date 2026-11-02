@@ -3,12 +3,10 @@ import test from "node:test";
 import { createApp } from "../src/app.js";
 
 const artifacts = {
+  centralized: { model: "RandomForestClassifier", metrics: { accuracy: 0.9 } },
   federated: {
-    configuration: {
-      clients: ["Operator A", "Operator B", "Operator C", "Operator D"],
-      partition_mode: "iid",
-      rounds: 3,
-    },
+    iid: { configuration: { clients: ["Operator A"], partition_mode: "iid", rounds: 5 } },
+    non_iid: { configuration: { clients: ["Operator A"], partition_mode: "non_iid", rounds: 5 } },
   },
   summary: {
     artifact_type: "simulated_model_generated_detection_summary",
@@ -83,7 +81,7 @@ test("serves health and actual federated data", async () => {
   assert.equal(health.body.status, "ok");
 
   const federated = await get("/api/federated");
-  assert.equal(federated.body.configuration.rounds, 3);
+  assert.equal(federated.body.iid.configuration.rounds, 5);
 });
 
 test("validates bounded threat limit and supports lookup", async () => {
@@ -95,4 +93,19 @@ test("validates bounded threat limit and supports lookup", async () => {
 
   const detail = await get("/api/threats/threat-1");
   assert.equal(detail.body.threat_id, "threat-1");
+});
+
+test("returns an honest empty threat list when no events are available", async () => {
+  const emptyApp = createApp({
+    artifacts: { ...artifacts, events: [], boundedEvents: [], summary: { ...artifacts.summary, event_count: 0 } },
+    mongoStore: { status: () => ({ configured: false, connected: false, error: null }) },
+  });
+  const server = emptyApp.listen(0);
+  await new Promise((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/threats`);
+  const body = await response.json();
+  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.threats, []);
 });

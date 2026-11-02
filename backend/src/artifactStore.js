@@ -13,6 +13,18 @@ async function readJson(name) {
 }
 
 export async function loadArtifacts() {
+  const snapshotPath =
+    process.env.DEMO_ARTIFACTS_PATH ?? path.join("data", "demo-artifacts.json");
+  const snapshot = snapshotPath
+    ? JSON.parse(await fs.readFile(path.resolve(snapshotPath), "utf8"))
+    : null;
+  if (snapshot) {
+    return {
+      ...snapshot,
+      boundedEvents: snapshot.events.slice(0, boundedThreatCount),
+      processedDirectory,
+    };
+  }
   const [federated, summary, events, propagation] = await Promise.all([
     readJson("federated_iid_report.json"),
     readJson("threat_summary.json"),

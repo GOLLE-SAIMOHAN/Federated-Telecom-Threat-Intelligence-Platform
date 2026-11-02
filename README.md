@@ -10,9 +10,11 @@ security platform.
 
 ## Repository status
 
-Phase 1 (project foundation) is complete. Runtime features are intentionally
-not implemented yet. See [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md)
-for the current scope and validation results.
+The local ML experiment set and a read-only React/Express demonstration are
+implemented. The dashboard uses a tracked snapshot derived from the generated
+experiment reports, so it can run without copying raw datasets or model
+binaries into the application. See
+[`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) for validation results.
 
 ## Planned structure
 
@@ -28,11 +30,10 @@ for the current scope and validation results.
 
 ### Python
 
-Use Python 3.11 or newer within the supported Python 3 series, create a
-virtual environment, and install the pinned top-level dependencies:
+Use Python 3.11 with the project virtual environment and pinned dependencies:
 
 ```powershell
-python -m venv .venv
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -40,19 +41,36 @@ python -m pip install -r requirements.txt
 
 ### Node.js
 
-Install Node.js 20 or newer, then install each JavaScript workspace's
-dependencies when that workspace is implemented:
+Install Node.js 20 or newer, then install each JavaScript workspace:
 
 ```powershell
 Set-Location backend
-npm install
+npm ci
 Set-Location ..\frontend
-npm install
+npm ci
 ```
 
-The backend and frontend manifests currently declare only their phase-specific
-foundation dependencies. Their application entry points will be added in later
-phases.
+### Run the local demo
+
+Start the backend in one terminal:
+
+```powershell
+Set-Location backend
+npm start
+```
+
+Start the frontend in another terminal:
+
+```powershell
+Set-Location frontend
+$env:VITE_API_URL = "http://localhost:3000/api"
+npm run dev
+```
+
+Open `http://localhost:5173`. The backend API is available at
+`http://localhost:3000/api`, including `/health`, `/system/status`,
+`/centralized`, `/federated`, `/experiments`, `/operators`, and the honest
+empty-state threat endpoints.
 
 ## Configuration
 

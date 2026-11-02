@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Threat Intelligence layer**
+**Local demonstration dashboard**
 
 ## Completed
 
@@ -34,10 +34,10 @@
 
 ## Not implemented yet
 
-- Dataset loading, validation, preprocessing, and operator partitioning.
-- Centralized or local machine-learning models.
-- Node/Express APIs and MongoDB persistence.
-- React pages and dashboard integration.
+- Production deployment infrastructure and independently isolated operator
+  services.
+- Live threat-intelligence event ingestion; the current dashboard reports an
+  honest empty state when no event artifact is present.
 - Docker services and end-to-end orchestration.
 
 ## Validation
@@ -58,11 +58,13 @@
 - Threat Intelligence and regression tests: `11 passed`.
 - CTI summary tests: passed.
 - Backend integration tests and API validation: passed.
+- Backend startup and dashboard endpoint probes: passed.
+- Frontend production build: passed.
 
 ## Known issues
 
-- Python and Node packages have not been installed into a runtime environment;
-  Node lockfiles were generated during manifest resolution.
+- The local demo requires the pinned Python `.venv` and installed Node
+  dependencies.
 - The provided `train_data.txt` and `test_data.txt` files were verified as
   readable comma-delimited datasets despite their `.txt` extensions.
 - Project copies were added as `train_data.csv` and `test_data.csv` under

@@ -35,9 +35,9 @@ export function createApp({ artifacts, mongoStore }) {
       data_source: "local_processed_artifacts",
       simulated_detection_events: true,
       federated: {
-        partition_mode: artifacts.federated.configuration.partition_mode,
-        rounds: artifacts.federated.configuration.rounds,
-        clients: artifacts.federated.configuration.clients,
+        experiments: ["iid", "non_iid"],
+        rounds: artifacts.federated.iid.configuration.rounds,
+        clients: artifacts.federated.iid.configuration.clients,
       },
       threat_event_count: artifacts.summary.event_count,
       bounded_threat_records: artifacts.boundedEvents.length,
@@ -46,11 +46,28 @@ export function createApp({ artifacts, mongoStore }) {
   });
 
   app.get("/api/operators", (_request, response) => {
-    response.json({ operators: createOperators(artifacts.summary) });
+    response.json({ operators: artifacts.operators ?? createOperators(artifacts.summary) });
   });
 
   app.get("/api/federated", (_request, response) => {
-    response.json(artifacts.federated);
+    response.json({
+      iid: artifacts.federated.iid,
+      non_iid: artifacts.federated.non_iid,
+    });
+  });
+
+  app.get("/api/centralized", (_request, response) => {
+    response.json(artifacts.centralized);
+  });
+
+  app.get("/api/experiments", (_request, response) => {
+    response.json({
+      centralized: artifacts.centralized,
+      federated: {
+        iid: artifacts.federated.iid,
+        non_iid: artifacts.federated.non_iid,
+      },
+    });
   });
 
   app.get("/api/threats/summary", (_request, response) => {
@@ -60,9 +77,12 @@ export function createApp({ artifacts, mongoStore }) {
   app.get("/api/threats", (request, response) => {
     const rawLimit = request.query.limit ?? "50";
     const limit = Number(rawLimit);
-    if (!Number.isInteger(limit) || limit < 1 || limit > artifacts.boundedEvents.length) {
+    const maximumLimit = artifacts.boundedEvents.length > 0
+      ? artifacts.boundedEvents.length
+      : 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > maximumLimit) {
       response.status(400).json({
-        error: `limit must be an integer between 1 and ${artifacts.boundedEvents.length}`,
+        error: `limit must be an integer between 1 and ${maximumLimit}`,
       });
       return;
     }
