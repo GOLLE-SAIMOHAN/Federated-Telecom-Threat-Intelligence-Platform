@@ -2,7 +2,16 @@ import numpy as np
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
 from flwr.server.strategy import FedAvg
 
-from ml.federated.simulation import CLIENT_NAMES, FederatedClient
+from ml.federated.simulation import (
+    CLIENT_NAMES,
+    FederatedClient,
+    FederatedConfig,
+    _metrics_from_confusion_matrix,
+)
+
+
+def test_default_configuration_uses_five_rounds():
+    assert FederatedConfig().rounds == 5
 
 
 def test_exactly_four_clients_and_local_data():
@@ -57,3 +66,28 @@ def test_client_fit_returns_parameters_only():
     assert len(updated) == 2
     assert "features" not in metrics
     assert "labels" not in metrics
+    assert "source_indices" not in metrics
+
+
+def test_client_evaluates_private_local_validation_data():
+    client = FederatedClient(
+        "operator_a",
+        np.array([[0.0, 1.0], [1.0, 0.0], [0.0, 1.0], [1.0, 0.0]]),
+        np.array([0, 1, 0, 1]),
+        np.arange(2),
+        42,
+    )
+    result = client.evaluate_local(client.get_parameters({}))
+    assert result["validation_rows"] == 2
+    assert np.asarray(result["confusion_matrix"]).shape == (2, 2)
+    assert "features" not in result
+    assert "labels" not in result
+    assert "source_indices" not in result
+
+
+def test_aggregated_confusion_matrix_metrics_are_deterministic():
+    matrix = np.array([[8, 2], [1, 9]])
+    metrics = _metrics_from_confusion_matrix(matrix)
+    assert metrics["accuracy"] == 0.85
+    assert metrics["macro_f1"] > 0.84
+    assert metrics["weighted_f1"] > 0.84

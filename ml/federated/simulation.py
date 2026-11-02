@@ -21,7 +21,8 @@ from flwr.common import (
 )
 from flwr.server.strategy import FedAvg
 from sklearn.linear_model import SGDClassifier
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import confusion_matrix
+from sklearn.utils.class_weight import compute_sample_weight
 
 
 CLIENT_NAMES = ("Operator A", "Operator B", "Operator C", "Operator D")
@@ -30,12 +31,72 @@ CLIENT_NAMES = ("Operator A", "Operator B", "Operator C", "Operator D")
 def _classifier(classes: np.ndarray, random_state: int) -> SGDClassifier:
     model = SGDClassifier(
         loss="log_loss",
-        class_weight="balanced",
+        class_weight=None,
         random_state=random_state,
         n_jobs=1,
     )
     model.classes_ = classes.copy()
     return model
+
+
+def _local_train_validation_split(
+    features: np.ndarray,
+    labels: np.ndarray,
+    classes: np.ndarray,
+    random_state: int,
+    validation_fraction: float = 0.2,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Create a deterministic per-class split without sharing validation arrays."""
+    rng = np.random.default_rng(random_state)
+    train_indices: list[int] = []
+    validation_indices: list[int] = []
+    for label in classes:
+        indices = np.flatnonzero(labels == label)
+        rng.shuffle(indices)
+        validation_count = min(
+            max(1, int(len(indices) * validation_fraction)),
+            max(0, len(indices) - 1),
+        )
+        validation_indices.extend(indices[:validation_count].tolist())
+        train_indices.extend(indices[validation_count:].tolist())
+    return (
+        features[train_indices],
+        labels[train_indices],
+        features[validation_indices],
+        labels[validation_indices],
+    )
+
+
+def _metrics_from_confusion_matrix(matrix: np.ndarray) -> dict[str, float]:
+    """Calculate global classification metrics from aggregated count data."""
+    matrix = np.asarray(matrix, dtype=np.int64)
+    total = int(matrix.sum())
+    if total == 0:
+        return {
+            "accuracy": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "macro_f1": 0.0,
+            "weighted_f1": 0.0,
+        }
+    true_positive = np.diag(matrix).astype(np.float64)
+    actual = matrix.sum(axis=1).astype(np.float64)
+    predicted = matrix.sum(axis=0).astype(np.float64)
+    precision = np.divide(true_positive, predicted, out=np.zeros_like(true_positive), where=predicted != 0)
+    recall = np.divide(true_positive, actual, out=np.zeros_like(true_positive), where=actual != 0)
+    f1 = np.divide(
+        2 * precision * recall,
+        precision + recall,
+        out=np.zeros_like(true_positive),
+        where=(precision + recall) != 0,
+    )
+    return {
+        "accuracy": float(true_positive.sum() / total),
+        "precision": float(np.average(precision, weights=actual)),
+        "recall": float(np.average(recall, weights=actual)),
+        "macro_f1": float(f1.mean()),
+        "weighted_f1": float(np.average(f1, weights=actual)),
+    }
 
 
 class FederatedClient(NumPyClient):
@@ -51,9 +112,20 @@ class FederatedClient(NumPyClient):
     ) -> None:
         self.name = name
         self.features = np.asarray(features, dtype=np.float64)
-        self.labels = labels
-        self.classes = classes
+        self.labels = np.asarray(labels)
+        self.classes = np.asarray(classes)
         self.random_state = random_state
+        (
+            self.train_features,
+            self.train_labels,
+            self.validation_features,
+            self.validation_labels,
+        ) = _local_train_validation_split(
+            self.features,
+            self.labels,
+            self.classes,
+            random_state,
+        )
 
     def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
         feature_count = self.features.shape[1]
@@ -72,20 +144,41 @@ class FederatedClient(NumPyClient):
         model.n_iter_ = 0
         model.t_ = 1.0
         started = time.perf_counter()
-        model.partial_fit(self.features, self.labels, classes=self.classes)
+        model.partial_fit(
+            self.train_features,
+            self.train_labels,
+            classes=self.classes,
+            sample_weight=compute_sample_weight("balanced", self.train_labels),
+        )
         elapsed = time.perf_counter() - started
         return (
             [model.coef_, model.intercept_],
-            len(self.labels),
+            len(self.train_labels),
             {"client": self.name, "training_time_seconds": elapsed},
         )
 
+    def evaluate_local(self, parameters: list[np.ndarray]) -> dict[str, Any]:
+        """Evaluate global parameters on this client's private validation split."""
+        model = _classifier(self.classes, 0)
+        model.coef_ = np.asarray(parameters[0], dtype=np.float64)
+        model.intercept_ = np.asarray(parameters[1], dtype=np.float64)
+        model.n_features_in_ = self.validation_features.shape[1]
+        predictions = model.predict(self.validation_features)
+        return {
+            "client": self.name,
+            "validation_rows": int(len(self.validation_labels)),
+            "confusion_matrix": confusion_matrix(
+                self.validation_labels,
+                predictions,
+                labels=self.classes,
+            ).tolist(),
+        }
 
 @dataclass(frozen=True)
 class FederatedConfig:
     processed_dir: Path = Path("data/processed")
     partition_mode: str = "iid"
-    rounds: int = 3
+    rounds: int = 5
     random_state: int = 42
 
 
@@ -100,19 +193,9 @@ def _evaluate(
     model.intercept_ = parameters[1]
     model.n_features_in_ = features.shape[1]
     predictions = model.predict(features)
-    return {
-        "accuracy": float(accuracy_score(labels, predictions)),
-        "precision_weighted": float(
-            precision_score(labels, predictions, average="weighted", zero_division=0)
-        ),
-        "recall_weighted": float(
-            recall_score(labels, predictions, average="weighted", zero_division=0)
-        ),
-        "f1_weighted": float(
-            f1_score(labels, predictions, average="weighted", zero_division=0)
-        ),
-        "macro_f1": float(f1_score(labels, predictions, average="macro", zero_division=0)),
-    }
+    return _metrics_from_confusion_matrix(
+        confusion_matrix(labels, predictions, labels=classes)
+    )
 
 
 def run_federated(config: FederatedConfig = FederatedConfig()) -> dict[str, Any]:
@@ -167,10 +250,19 @@ def run_federated(config: FederatedConfig = FederatedConfig()) -> dict[str, Any]
         if global_parameters is None:
             raise RuntimeError("Flower FedAvg returned no global parameters.")
         update_arrays = parameters_to_ndarrays(global_parameters)
+        validation_matrix = np.zeros((len(classes), len(classes)), dtype=np.int64)
+        validation_rows = 0
+        for client in clients:
+            validation = client.evaluate_local(update_arrays)
+            validation_matrix += np.asarray(validation["confusion_matrix"], dtype=np.int64)
+            validation_rows += int(validation["validation_rows"])
         rounds.append(
             {
                 "round": round_number,
                 "client_sample_counts": client_sizes,
+                "validation_rows": validation_rows,
+                "validation_metrics": _metrics_from_confusion_matrix(validation_matrix),
+                "validation_confusion_matrix": validation_matrix.tolist(),
                 "training_time_seconds": time.perf_counter() - round_started,
                 "model_update": {
                     "parameter_names": ["coef_", "intercept_"],
@@ -198,19 +290,20 @@ def run_federated(config: FederatedConfig = FederatedConfig()) -> dict[str, Any]
             "loss": "log_loss",
             "preprocessing_refit": False,
             "server_receives_raw_data": False,
+            "validation_strategy": "deterministic per-operator local validation split",
         },
         "client_sizes": client_sizes,
         "rounds": rounds,
         "final_metrics": final_metrics,
     }
-    output_path = processed / f"federated_{config.partition_mode}_report.json"
+    output_path = processed / f"federated_{config.partition_mode}_rounds_{config.rounds}_report.json"
     output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     joblib.dump(
         {
             "parameters": parameters_to_ndarrays(global_parameters),
             "classes": artifacts["label_encoder"].classes_.tolist(),
         },
-        processed / f"federated_{config.partition_mode}_model.joblib",
+        processed / f"federated_{config.partition_mode}_rounds_{config.rounds}_model.joblib",
     )
     return output
 
