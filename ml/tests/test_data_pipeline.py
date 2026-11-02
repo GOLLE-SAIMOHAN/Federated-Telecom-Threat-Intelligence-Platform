@@ -148,6 +148,16 @@ def test_baseline_uses_saved_artifacts_without_refitting(tmp_path: Path) -> None
 
     result = run_baseline(tmp_path)
 
-    assert result["model"] == "sklearn.linear_model.SGDClassifier"
+    assert result["model"] == "sklearn.ensemble.RandomForestClassifier"
+    assert result["model_params"]["class_weight"] == "balanced_subsample"
+    assert result["model_params"]["n_estimators"] == 100
     assert result["metrics"]["accuracy"] >= 0
+    assert {
+        "accuracy",
+        "precision",
+        "recall",
+        "macro_f1",
+        "weighted_f1",
+    } <= result["metrics"].keys()
+    assert len(result["confusion_matrix"]) == 2
     assert (tmp_path / "centralized_baseline_model.joblib").exists()

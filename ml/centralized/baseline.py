@@ -9,7 +9,7 @@ from typing import Any
 
 import joblib
 import numpy as np
-from sklearn.linear_model import SGDClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
     confusion_matrix,
@@ -24,7 +24,7 @@ def run_baseline(
     processed_dir: Path = Path("data/processed"),
     random_state: int = 42,
 ) -> dict[str, Any]:
-    """Train and evaluate SGDClassifier using saved Phase 2 transformations."""
+    """Train and evaluate RandomForestClassifier using saved Phase 2 transformations."""
     artifacts = joblib.load(processed_dir / "artifacts" / "preprocessing.joblib")
     train_arrays = [
         np.load(processed_dir / "operator_partitions" / f"iid_operator_{name}.npz")
@@ -37,10 +37,13 @@ def run_baseline(
     labels = np.arange(len(label_encoder.classes_))
 
     config = {
-        "model": "sklearn.linear_model.SGDClassifier",
-        "loss": "log_loss",
-        "class_weight": "balanced",
-        "random_state": random_state,
+        "model": "sklearn.ensemble.RandomForestClassifier",
+        "model_params": {
+            "n_estimators": 100,
+            "class_weight": "balanced_subsample",
+            "random_state": random_state,
+            "n_jobs": -1,
+        },
         "training_data": "data/processed/operator_partitions/iid_operator_{a,b,c,d}.npz",
         "evaluation_data": "data/processed/test_preprocessed.npz",
         "preprocessing_artifact": "data/processed/artifacts/preprocessing.joblib",
@@ -52,9 +55,9 @@ def run_baseline(
         json.dumps(config, indent=2), encoding="utf-8"
     )
 
-    model = SGDClassifier(
-        loss="log_loss",
-        class_weight="balanced",
+    model = RandomForestClassifier(
+        n_estimators=100,
+        class_weight="balanced_subsample",
         random_state=random_state,
         n_jobs=-1,
     )
@@ -71,12 +74,17 @@ def run_baseline(
     )
     results = {
         "model": config["model"],
+        "model_params": config["model_params"],
         "training_time_seconds": training_seconds,
         "evaluation_time_seconds": evaluation_seconds,
         "metrics": {
             "accuracy": float(accuracy_score(y_test, predictions)),
-            "precision": float(precision_score(y_test, predictions, average="weighted", zero_division=0)),
-            "recall": float(recall_score(y_test, predictions, average="weighted", zero_division=0)),
+            "precision": float(
+                precision_score(y_test, predictions, average="weighted", zero_division=0)
+            ),
+            "recall": float(
+                recall_score(y_test, predictions, average="weighted", zero_division=0)
+            ),
             "f1": float(f1_score(y_test, predictions, average="weighted", zero_division=0)),
             "macro_f1": float(f1_score(y_test, predictions, average="macro", zero_division=0)),
             "weighted_f1": float(f1_score(y_test, predictions, average="weighted", zero_division=0)),
