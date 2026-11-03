@@ -53,6 +53,24 @@ export class MongoStore {
     }
   }
 
+  async persistDetectionEvents(events) {
+    if (!this.connected || events.length === 0) return;
+    await this.database.collection("detection_events").createIndex(
+      { event_id: 1 },
+      { unique: true },
+    );
+    await this.database.collection("detection_events").bulkWrite(
+      events.map((event) => ({
+        updateOne: {
+          filter: { event_id: event.event_id },
+          update: { $set: event },
+          upsert: true,
+        },
+      })),
+      { ordered: false },
+    );
+  }
+
   status() {
     return {
       configured: Boolean(this.uri),

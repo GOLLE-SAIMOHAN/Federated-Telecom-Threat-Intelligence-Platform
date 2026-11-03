@@ -100,6 +100,34 @@ test("returns an honest empty threat list when no events are available", async (
     artifacts: { ...artifacts, events: [], boundedEvents: [], summary: { ...artifacts.summary, event_count: 0 } },
     mongoStore: { status: () => ({ configured: false, connected: false, error: null }) },
   });
+
+  test("accepts a validated CSV detection request", async () => {
+    const detectionApp = createApp({
+      artifacts,
+      mongoStore: { status: () => ({ configured: false, connected: false, error: null }) },
+      inference: async () => ({
+        model_version: "federated_iid_rounds_5",
+        processed_rows: 1,
+        benign_count: 1,
+        attack_count: 0,
+        predictions: [{ row_number: 2, predicted_class: "benign", model_score: 0.99 }],
+        summary: [{ predicted_class: "benign", count: 1 }],
+        attack_events: [],
+      }),
+    });
+    const server = detectionApp.listen(0);
+    await new Promise((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/detection`, {
+      method: "POST",
+      headers: { "content-type": "text/csv" },
+      body: "ip.len,tcp.port\n1,2\n",
+    });
+    const body = await response.json();
+    await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    assert.equal(response.status, 200);
+    assert.equal(body.processed_rows, 1);
+  });
   const server = emptyApp.listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
   const address = server.address();

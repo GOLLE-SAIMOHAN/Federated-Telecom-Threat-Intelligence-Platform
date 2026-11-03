@@ -9,6 +9,7 @@ const navigation = [
   ["operators", "Operators"],
   ["performance", "Model Performance"],
   ["workflow", "How It Works"],
+  ["detection", "Intrusion Detection"],
   ["threats", "Threat Intelligence"],
 ];
 const workflowStages = [
@@ -95,6 +96,52 @@ function Performance({ centralized, iid, nonIid, labels }) {
   return <section id="performance" className="section"><SectionHeading eyebrow="Model performance" title="Comparable experiment results" /><div className="comparison-table panel"><table><thead><tr><th>Experiment</th><th>Accuracy</th><th>Macro-F1</th><th>Weighted-F1</th></tr></thead><tbody>{rows.map(([name, metrics]) => <tr key={name}><th>{name}</th><td>{((metrics?.accuracy ?? 0) * 100).toFixed(2)}%</td><td>{((metrics?.macro_f1 ?? 0) * 100).toFixed(2)}%</td><td>{((metrics?.weighted_f1 ?? 0) * 100).toFixed(2)}%</td></tr>)}</tbody></table></div><div className="grid performance-grid"><div className="panel"><h3>Centralized per-class performance</h3><div className="class-list">{classRows.map(([name, metric]) => <div className="class-row" key={name}><span>{name}</span><div className="bar"><i style={{ width: `${(metric.f1 ?? 0) * 100}%` }} /></div><b>{((metric.f1 ?? 0) * 100).toFixed(1)}%</b></div>)}</div></div><div className="panel explanation"><h3>How to read these metrics</h3><p><strong>Accuracy</strong> is the share of all predictions that are correct. It can look high when benign examples dominate the dataset.</p><p><strong>Macro-F1</strong> averages F1 equally across classes, so rare attack classes matter as much as common classes.</p><p className="callout">Random Forest is the centralized baseline. Federated results use SGDClassifier with Flower FedAvg; they are separate model experiments, not identical-algorithm comparisons.</p></div></div></section>;
 }
 
+const requiredDetectionColumns = ["ip.len", "ip.flags.df", "ip.flags.mf", "tcp.port", "tcp.ack_raw", "ip.ttl", "ip.proto", "tcp.window_size.1", "tcp.ack", "tcp.seq", "tcp.len", "tcp.stream", "tcp.urgent_pointer", "tcp.flags", "tcp.analysis.ack_rtt", "http.request", "frame.time_relative", "frame.time_delta", "tcp.time_relative", "tcp.time_delta", "tcp.srcport", "tcp.dstport", "http.request.uri"];
+
+function IntrusionDetection() {
+  const [file, setFile] = useState(null);
+  const [status, setStatus] = useState("");
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const selectFile = (event) => {
+    const selected = event.target.files?.[0] ?? null;
+    setResult(null);
+    if (!selected) return;
+    if (selected.size > 5 * 1024 * 1024) { setFile(null); setStatus("File exceeds the 5 MB upload limit."); return; }
+    setFile(selected);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const headers = String(reader.result).split(/\r?\n/, 1)[0].split(",").map((value) => value.trim());
+      const missing = requiredDetectionColumns.filter((column) => !headers.includes(column));
+      setStatus(missing.length ? `Missing required columns: ${missing.join(", ")}` : "Schema looks valid. Ready for detection.");
+    };
+    reader.readAsText(selected.slice(0, 256 * 1024));
+  };
+  const detect = async () => {
+    if (!file || status.startsWith("Missing") || status.startsWith("File")) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${API_URL}/detection`, { method: "POST", headers: { "Content-Type": "text/csv" }, body: await file.text() });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Detection failed.");
+      setResult(body);
+      setStatus("Detection completed.");
+    } catch (error) { setStatus(error.message); } finally { setBusy(false); }
+  };
+  const download = () => {
+    if (!result) return;
+    const blob = new Blob([JSON.stringify(result.predictions, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "intrusion-detection-results.json";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+  return <section id="detection" className="section"><SectionHeading eyebrow="Operational inference" title="Intrusion Detection" action={<span className="badge">Federated IID model</span>} />
+    <div className="panel detection-panel"><input type="file" accept=".csv,text/csv" onChange={selectFile} /><p className="muted-copy">{file ? `${file.name} · ${(file.size / 1024).toFixed(1)} KB` : "Select a CSV containing the trained feature columns."}</p><p className={status.startsWith("Missing") || status.startsWith("File") ? "validation-error" : "validation-status"}>{status || "No file selected."}</p><button className="button" disabled={!file || busy || status.startsWith("Missing") || status.startsWith("File")} onClick={detect}>{busy ? "Processing..." : "Start detection"}</button>{result && <><div className="metrics detection-metrics"><Metric label="Processed" value={result.processed_rows.toLocaleString()} /><Metric label="Benign" value={result.benign_count.toLocaleString()} /><Metric label="Attacks" value={result.attack_count.toLocaleString()} /></div><div className="detection-summary">{result.summary.map((item) => <span key={item.predicted_class}>{item.predicted_class}: {item.count}</span>)}</div><div className="detection-results"><table><thead><tr><th>Row</th><th>Prediction</th><th>Score</th></tr></thead><tbody>{result.predictions.map((item) => <tr key={item.row_number}><td>{item.row_number}</td><td>{item.predicted_class}</td><td>{(item.model_score * 100).toFixed(2)}%</td></tr>)}</tbody></table></div><button className="button ghost" onClick={download}>Download prediction results</button></>}</div>
+  </section>;
+}
+
 function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -118,6 +165,7 @@ function App() {
     <Operators operators={data.operators.operators} />
     <Performance centralized={centralized} iid={federated.iid} nonIid={federated.non_iid} labels={labels} />
     <Workflow />
+    <IntrusionDetection />
     <section id="threats" className="section"><SectionHeading eyebrow="Threat intelligence" title="Detection events" action={<span className="badge muted">{data["threats/summary"].available ? "Available" : "Empty state"}</span>} /><div className="panel threat"><h3>{data["threats/summary"].available ? "Available threat artifacts" : "No threat event artifacts are currently available."}</h3><p>{data["threats/summary"].message}</p></div></section>
     <footer>Source: verified local experiment artifacts · In-process simulation · No raw operator records exposed</footer>
   </main>;

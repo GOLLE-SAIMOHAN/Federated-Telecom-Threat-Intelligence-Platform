@@ -1,5 +1,12 @@
 import cors from "cors";
 import express from "express";
+import { runInference } from "./inferenceRunner.js";
+
+function publicDetectionError(error) {
+  const message = error instanceof Error ? error.message : "";
+  if (/^(CSV|Missing required|Column '.*' contains|The CSV)/.test(message)) return message;
+  return "Detection service could not process the uploaded CSV.";
+}
 
 function createOperators(summary) {
   const operators = new Map();
@@ -19,7 +26,7 @@ function createOperators(summary) {
   }));
 }
 
-export function createApp({ artifacts, mongoStore }) {
+export function createApp({ artifacts, mongoStore, inference = runInference }) {
   const app = express();
   app.disable("x-powered-by");
   const configuredOrigins = process.env.CORS_ORIGIN
@@ -30,6 +37,11 @@ export function createApp({ artifacts, mongoStore }) {
     origin: configuredOrigins?.length ? configuredOrigins : true,
   }));
   app.use(express.json({ limit: "64kb" }));
+  const uploadLimit = process.env.DETECTION_MAX_BYTES ?? "5mb";
+  app.use("/api/detection", express.raw({
+    type: ["text/csv", "application/csv", "application/octet-stream"],
+    limit: uploadLimit,
+  }));
 
   app.get("/api/health", (_request, response) => {
     response.json({ status: "ok", service: "federated-telecom-backend" });
@@ -109,6 +121,33 @@ export function createApp({ artifacts, mongoStore }) {
       return;
     }
     response.json(threat);
+  });
+
+  app.post("/api/detection", async (request, response) => {
+    if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
+      response.status(400).json({ error: "Send a non-empty CSV file with Content-Type text/csv." });
+      return;
+    }
+    try {
+      const result = await inference(request.body.toString("utf8"));
+      let persistence = { configured: mongoStore.status().configured, persisted: false };
+      if (result.attack_events?.length && mongoStore.persistDetectionEvents) {
+        await mongoStore.persistDetectionEvents(result.attack_events);
+        persistence = { ...persistence, persisted: mongoStore.status().connected };
+      }
+      response.json({ ...result, persistence });
+    } catch (error) {
+      const message = publicDetectionError(error);
+      response.status(message.includes("limit") ? 413 : 400).json({ error: message });
+    }
+  });
+
+  app.use((error, _request, response, _next) => {
+    if (error?.type === "entity.too.large") {
+      response.status(413).json({ error: "The uploaded CSV exceeds the configured size limit." });
+      return;
+    }
+    response.status(400).json({ error: "The request could not be processed." });
   });
 
   app.use((_request, response) => {

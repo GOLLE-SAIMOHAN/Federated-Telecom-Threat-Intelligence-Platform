@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Local demonstration dashboard**
+**Batch intrusion detection**
 
 ## Completed
 
@@ -134,8 +134,25 @@
   code is added.
 
 ## Pending work
+- Live packet capture is out of scope for this milestone.
+- Production deployment must provide a Python inference service and set `INFERENCE_URL`,
+  or provide the pinned Python environment through `PYTHON_EXECUTABLE`.
 
-- Review the backend API before beginning React/dashboard integration.
+## Batch intrusion detection milestone
+
+- Added inference-only reconstruction of the five-round IID Flower global
+  `SGDClassifier`; no training occurs during requests.
+- Added schema validation, fitted-artifact-only preprocessing, class
+  probabilities, grouped summaries, and attack-only detection events.
+- Added `POST /api/detection` for bounded CSV uploads and optional MongoDB event
+  persistence.
+- Added the React Intrusion Detection upload, validation, results, distribution,
+  record inspection, and JSON download workflow.
+- The exact required input columns are the 23 columns stored in
+  `data/processed/artifacts/preprocessing.joblib`; an optional `attack` column is
+  ignored and is never used for inference.
+- MongoDB persistence is available only when `MONGODB_URI` connects successfully;
+  otherwise events are returned with `persistence.persisted: false`.
 
 Follow the phase order in `PROJECT_SPEC.md`. Do not begin a later phase until
 the current phase has been implemented and tested.
