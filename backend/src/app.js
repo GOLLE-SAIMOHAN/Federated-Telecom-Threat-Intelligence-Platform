@@ -138,7 +138,7 @@ export function createApp({ artifacts, mongoStore, inference = runInference }) {
       response.json({ ...result, persistence });
     } catch (error) {
       const message = publicDetectionError(error);
-      response.status(message.includes("limit") ? 413 : 400).json({ error: message });
+      response.status(error?.statusCode ?? (message.includes("limit") ? 413 : 400)).json({ error: message });
     }
   });
 

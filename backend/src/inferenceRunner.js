@@ -7,20 +7,46 @@ const maxOutputBytes = 16 * 1024 * 1024;
 
 export function runInference(csv) {
   if (process.env.INFERENCE_URL) {
+    if (!process.env.INFERENCE_API_KEY) {
+      const error = new Error("Inference service authentication is not configured.");
+      error.statusCode = 503;
+      return Promise.reject(error);
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     return fetch(`${process.env.INFERENCE_URL.replace(/\/$/, "")}/predict`, {
       method: "POST",
-      headers: { "content-type": "text/csv" },
+      headers: { "content-type": "text/csv", "X-Inference-API-Key": process.env.INFERENCE_API_KEY },
       body: csv,
+      signal: controller.signal,
     }).then(async (response) => {
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Inference service rejected the CSV.");
+      if (!response.ok) {
+        const error = new Error(body.error ?? "Inference service rejected the CSV.");
+        error.statusCode = response.status >= 500 ? 503 : response.status;
+        throw error;
+      }
       return body;
+    }).catch((error) => {
+      if (error.name === "AbortError" || error.name === "TypeError") {
+        const unavailable = new Error("Inference service is unavailable.");
+        unavailable.statusCode = 503;
+        throw unavailable;
+      }
+      throw error;
+    }).finally(() => {
+      clearTimeout(timeout);
     });
+  }
+  if (process.env.NODE_ENV === "production") {
+    const error = new Error("Inference service URL is not configured.");
+    error.statusCode = 503;
+    return Promise.reject(error);
   }
   const executable = process.env.PYTHON_EXECUTABLE ?? path.join(repositoryRoot, ".venv", "Scripts", "python.exe");
   const processedDir = process.env.PROCESSED_DATA_DIR ?? path.join(repositoryRoot, "data", "processed");
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ["-m", "ml.inference", "--processed-dir", processedDir], {
+  const child = spawn(executable, ["-m", "ml.inference", "--processed-dir", processedDir], {
       cwd: repositoryRoot,
       windowsHide: true,
     });

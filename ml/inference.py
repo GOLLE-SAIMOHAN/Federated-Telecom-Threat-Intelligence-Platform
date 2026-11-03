@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -19,16 +20,34 @@ from sklearn.linear_model import SGDClassifier
 
 MODEL_VERSION = "federated_iid_rounds_5"
 DEFAULT_PROCESSED_DIR = Path("data/processed")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+_LOADED_ESTIMATOR: SGDClassifier | None = None
+_LOADED_ARTIFACTS: dict[str, Any] | None = None
 
 
 class InferenceValidationError(ValueError):
     """Raised when an uploaded traffic table does not match the model schema."""
 
 
-def load_federated_estimator(processed_dir: Path = DEFAULT_PROCESSED_DIR) -> tuple[SGDClassifier, dict[str, Any]]:
+def resolve_artifact_directory(processed_dir: Path | None = None) -> Path:
+    configured = os.environ.get("INFERENCE_ARTIFACT_DIR")
+    directory = Path(configured) if configured else (processed_dir or REPOSITORY_ROOT / "data" / "processed")
+    return directory if directory.is_absolute() else REPOSITORY_ROOT / directory
+
+
+def load_federated_estimator(processed_dir: Path | None = None) -> tuple[SGDClassifier, dict[str, Any]]:
     """Reconstruct the estimator from Flower's serialized parameter arrays."""
-    model_bundle = joblib.load(processed_dir / f"{MODEL_VERSION}_model.joblib")
-    artifacts = joblib.load(processed_dir / "artifacts" / "preprocessing.joblib")
+    artifact_directory = resolve_artifact_directory(processed_dir)
+    model_path = artifact_directory / f"{MODEL_VERSION}_model.joblib"
+    preprocessing_path = (
+        artifact_directory / "preprocessing.joblib"
+        if os.environ.get("INFERENCE_ARTIFACT_DIR")
+        else artifact_directory / "artifacts" / "preprocessing.joblib"
+    )
+    if os.environ.get("INFERENCE_ARTIFACT_DIR") is None and processed_dir is None:
+        preprocessing_path = REPOSITORY_ROOT / "data" / "processed" / "artifacts" / "preprocessing.joblib"
+    model_bundle = joblib.load(model_path)
+    artifacts = joblib.load(preprocessing_path)
     classes = np.asarray(model_bundle["classes"])
     parameters = model_bundle["parameters"]
     if len(parameters) != 2 or parameters[0].shape[0] != len(classes):
@@ -40,7 +59,14 @@ def load_federated_estimator(processed_dir: Path = DEFAULT_PROCESSED_DIR) -> tup
     estimator.n_features_in_ = estimator.coef_.shape[1]
     estimator.n_iter_ = 1
     estimator.t_ = 1.0
+    if estimator.coef_.shape[1] != len(artifacts["preprocessor"].get_feature_names_out()):
+        raise RuntimeError("The model and preprocessing artifacts have incompatible feature dimensions.")
     return estimator, artifacts
+
+
+def initialize_inference(processed_dir: Path | None = None) -> None:
+    global _LOADED_ESTIMATOR, _LOADED_ARTIFACTS
+    _LOADED_ESTIMATOR, _LOADED_ARTIFACTS = load_federated_estimator(processed_dir)
 
 
 def _validate_and_transform(
@@ -69,7 +95,10 @@ def _validate_and_transform(
 def predict_frame(
     frame: pd.DataFrame, processed_dir: Path = DEFAULT_PROCESSED_DIR
 ) -> dict[str, Any]:
-    estimator, artifacts = load_federated_estimator(processed_dir)
+    estimator = _LOADED_ESTIMATOR
+    artifacts = _LOADED_ARTIFACTS
+    if estimator is None or artifacts is None:
+        estimator, artifacts = load_federated_estimator(processed_dir)
     transformed, feature_columns = _validate_and_transform(frame, artifacts)
     if len(frame) == 0:
         raise InferenceValidationError("The CSV must contain at least one data row.")
@@ -134,7 +163,7 @@ def predict_csv(csv_text: str, processed_dir: Path = DEFAULT_PROCESSED_DIR) -> d
         frame = pd.read_csv(io.StringIO(csv_text))
     except Exception as error:
         raise InferenceValidationError("The uploaded file is not a valid CSV.") from error
-    max_rows = int(__import__("os").environ.get("DETECTION_MAX_ROWS", "10000"))
+    max_rows = min(int(os.environ.get("DETECTION_MAX_ROWS", "10000")), 10000)
     if len(frame) > max_rows:
         raise InferenceValidationError("The CSV exceeds the maximum row limit.")
     return predict_frame(frame, processed_dir)

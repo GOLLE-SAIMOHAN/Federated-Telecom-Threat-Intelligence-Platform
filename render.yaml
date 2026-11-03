@@ -10,6 +10,9 @@ services:
     envVars:
       - key: CORS_ORIGIN
         sync: false
+      - fromGroup: telecom-inference-auth
+      - key: INFERENCE_URL
+        sync: false
 
   - type: web
     name: federated-telecom-frontend
@@ -20,3 +23,22 @@ services:
     envVars:
       - key: VITE_API_URL
         sync: false
+
+  - type: web
+    name: federated-telecom-inference
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements-inference.txt
+    startCommand: python -m ml.inference_service
+    healthCheckPath: /health
+    envVars:
+      - fromGroup: telecom-inference-auth
+      - key: INFERENCE_ARTIFACT_DIR
+        value: ml/deployment_artifacts
+
+envVarGroups:
+  - name: telecom-inference-auth
+    envVars:
+      - key: INFERENCE_API_KEY
+        generateValue: true

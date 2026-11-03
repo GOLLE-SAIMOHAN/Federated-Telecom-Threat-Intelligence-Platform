@@ -28,6 +28,9 @@ reports/
 logs/
 *.pkl
 *.joblib
+!ml/deployment_artifacts/
+!ml/deployment_artifacts/preprocessing.joblib
+!ml/deployment_artifacts/federated_iid_rounds_5_model.joblib
 
 # Build output
 dist/

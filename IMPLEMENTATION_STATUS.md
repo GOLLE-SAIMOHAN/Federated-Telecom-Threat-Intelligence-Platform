@@ -4,6 +4,19 @@
 
 **Batch intrusion detection**
 
+## Inference deployment packaging
+
+- Packaged the verified IID federated model and fitted preprocessing artifact
+  under `ml/deployment_artifacts/` with SHA-256 equality verified against the
+  originals.
+- Added an authenticated Python Render service with `/health` and `/predict`,
+  independent request-size and row limits, and startup artifact validation.
+- Added the inference-only pinned dependency manifest and Python 3.11.9
+  version marker.
+- Added the third Render service and shared generated API-key environment group.
+- The backend requires the manually configured Render `INFERENCE_URL`; the
+  public Python service URL must be entered after Render creates the service.
+
 ## Completed
 
 - Established the planned repository structure.
