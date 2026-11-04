@@ -16,6 +16,13 @@ function errorDetails(error) {
   };
 }
 
+function sanitizeResponsePreview(body, contentType) {
+  if (contentType?.toLowerCase().includes("text/csv")) return "[redacted CSV response]";
+  return body.slice(0, 200)
+    .replace(/(?:api[-_ ]?key|authorization|token|secret)(\s*[:=]\s*)["']?[^"',\s]+["']?/gi, "$1[redacted]")
+    .replace(/[\u0000-\u001f\u007f]/g, " ");
+}
+
 export function runInference(csv, requestId = "unknown") {
   if (process.env.INFERENCE_URL) {
     if (!process.env.INFERENCE_API_KEY) {
@@ -40,12 +47,21 @@ export function runInference(csv, requestId = "unknown") {
     }).then(async (response) => {
       const elapsed_ms = Math.round(performance.now() - startedAt);
       let body;
+      let responseText;
       try {
-        body = await response.json();
+        responseText = await response.text();
+        body = JSON.parse(responseText);
       } catch (error) {
+        const contentType = response.headers.get("content-type") ?? "unknown";
         log("error", "inference_invalid_response", {
           request_id: requestId,
           status: response.status,
+          status_text: response.statusText,
+          content_type: contentType,
+          response_body_length: responseText?.length ?? 0,
+          response_body_preview: typeof responseText === "string"
+            ? sanitizeResponsePreview(responseText, contentType)
+            : "[unavailable]",
           elapsed_ms,
           error: errorDetails(error),
           stack: error instanceof Error ? error.stack : undefined,
