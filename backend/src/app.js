@@ -1,4 +1,5 @@
 import cors from "cors";
+import { randomUUID } from "node:crypto";
 import express from "express";
 import { runInference } from "./inferenceRunner.js";
 
@@ -6,6 +7,15 @@ function publicDetectionError(error) {
   const message = error instanceof Error ? error.message : "";
   if (/^(CSV|Missing required|Column '.*' contains|The CSV)/.test(message)) return message;
   return "Detection service could not process the uploaded CSV.";
+}
+
+function requestId(request) {
+  const supplied = request.get("X-Request-ID")?.trim();
+  return supplied && /^[A-Za-z0-9._:-]{1,128}$/.test(supplied) ? supplied : randomUUID();
+}
+
+function logDetection(level, event, details = {}) {
+  console[level](JSON.stringify({ service: "backend", event, ...details }));
 }
 
 function createOperators(summary) {
@@ -124,21 +134,46 @@ export function createApp({ artifacts, mongoStore, inference = runInference }) {
   });
 
   app.post("/api/detection", async (request, response) => {
+    const traceId = requestId(request);
+    const startedAt = performance.now();
+    response.setHeader("X-Request-ID", traceId);
+    logDetection("info", "detection_request_started", { request_id: traceId });
     if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
+      logDetection("error", "detection_request_rejected", {
+        request_id: traceId,
+        code: "EMPTY_CSV",
+      });
       response.status(400).json({ error: "Send a non-empty CSV file with Content-Type text/csv." });
       return;
     }
     try {
-      const result = await inference(request.body.toString("utf8"));
+      logDetection("info", "inference_call_started", { request_id: traceId });
+      const result = await inference(request.body.toString("utf8"), traceId);
       let persistence = { configured: mongoStore.status().configured, persisted: false };
       if (result.attack_events?.length && mongoStore.persistDetectionEvents) {
         await mongoStore.persistDetectionEvents(result.attack_events);
         persistence = { ...persistence, persisted: mongoStore.status().connected };
       }
+      logDetection("info", "detection_request_succeeded", {
+        request_id: traceId,
+        elapsed_ms: Math.round(performance.now() - startedAt),
+        processed_rows: result.processed_rows,
+      });
       response.json({ ...result, persistence });
     } catch (error) {
       const message = publicDetectionError(error);
-      response.status(error?.statusCode ?? (message.includes("limit") ? 413 : 400)).json({ error: message });
+      logDetection("error", "detection_request_failed", {
+        request_id: traceId,
+        elapsed_ms: Math.round(performance.now() - startedAt),
+        code: error?.code ?? "DETECTION_FAILED",
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      response.status(error?.statusCode ?? (message.includes("limit") ? 413 : 400)).json({
+        error: message,
+        code: error?.code ?? "DETECTION_FAILED",
+        request_id: traceId,
+      });
     }
   });
 

@@ -159,6 +159,8 @@
   probabilities, grouped summaries, and attack-only detection events.
 - Added `POST /api/detection` for bounded CSV uploads and optional MongoDB event
   persistence.
+- Added request-ID tracing and targeted backend/Python inference diagnostics for
+  deployed CSV detection failures without logging API keys or CSV contents.
 - Added the React Intrusion Detection upload, validation, results, distribution,
   record inspection, and JSON download workflow.
 - The exact required input columns are the 23 columns stored in
