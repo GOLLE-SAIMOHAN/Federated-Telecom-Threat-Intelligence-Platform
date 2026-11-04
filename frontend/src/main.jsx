@@ -119,11 +119,15 @@ function IntrusionDetection() {
   };
   const detect = async () => {
     if (!file || status.startsWith("Missing") || status.startsWith("File")) return;
+    setStatus("");
     setBusy(true);
     try {
       const response = await fetch(`${API_URL}/detection`, { method: "POST", headers: { "Content-Type": "text/csv" }, body: await file.text() });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Detection failed.");
+      if (!response.ok) {
+        const requestId = body.request_id || response.headers.get("X-Request-ID") || "Unavailable";
+        throw new Error(`Error: ${body.error ?? "Detection failed."} | HTTP status: ${response.status} | Backend code: ${body.code ?? "Unavailable"} | Request ID: ${requestId}`);
+      }
       setResult(body);
       setStatus("Detection completed.");
     } catch (error) { setStatus(error.message); } finally { setBusy(false); }
@@ -138,7 +142,7 @@ function IntrusionDetection() {
     URL.revokeObjectURL(link.href);
   };
   return <section id="detection" className="section"><SectionHeading eyebrow="Operational inference" title="Intrusion Detection" action={<span className="badge">Federated IID model</span>} />
-    <div className="panel detection-panel"><input type="file" accept=".csv,text/csv" onChange={selectFile} /><p className="muted-copy">{file ? `${file.name} · ${(file.size / 1024).toFixed(1)} KB` : "Select a CSV containing the trained feature columns."}</p><p className={status.startsWith("Missing") || status.startsWith("File") ? "validation-error" : "validation-status"}>{status || "No file selected."}</p><button className="button" disabled={!file || busy || status.startsWith("Missing") || status.startsWith("File")} onClick={detect}>{busy ? "Processing..." : "Start detection"}</button>{result && <><div className="metrics detection-metrics"><Metric label="Processed" value={result.processed_rows.toLocaleString()} /><Metric label="Benign" value={result.benign_count.toLocaleString()} /><Metric label="Attacks" value={result.attack_count.toLocaleString()} /></div><div className="detection-summary">{result.summary.map((item) => <span key={item.predicted_class}>{item.predicted_class}: {item.count}</span>)}</div><div className="detection-results"><table><thead><tr><th>Row</th><th>Prediction</th><th>Score</th></tr></thead><tbody>{result.predictions.map((item) => <tr key={item.row_number}><td>{item.row_number}</td><td>{item.predicted_class}</td><td>{(item.model_score * 100).toFixed(2)}%</td></tr>)}</tbody></table></div><button className="button ghost" onClick={download}>Download prediction results</button></>}</div>
+    <div className="panel detection-panel"><input type="file" accept=".csv,text/csv" onChange={selectFile} /><p className="muted-copy">{file ? `${file.name} · ${(file.size / 1024).toFixed(1)} KB` : "Select a CSV containing the trained feature columns."}</p><p className={status.startsWith("Missing") || status.startsWith("File") || status.startsWith("Error:") ? "validation-error" : "validation-status"}>{status || "No file selected."}</p><button className="button" disabled={!file || busy || status.startsWith("Missing") || status.startsWith("File")} onClick={detect}>{busy ? "Processing..." : "Start detection"}</button>{result && <><div className="metrics detection-metrics"><Metric label="Processed" value={result.processed_rows.toLocaleString()} /><Metric label="Benign" value={result.benign_count.toLocaleString()} /><Metric label="Attacks" value={result.attack_count.toLocaleString()} /></div><div className="detection-summary">{result.summary.map((item) => <span key={item.predicted_class}>{item.predicted_class}: {item.count}</span>)}</div><div className="detection-results"><table><thead><tr><th>Row</th><th>Prediction</th><th>Score</th></tr></thead><tbody>{result.predictions.map((item) => <tr key={item.row_number}><td>{item.row_number}</td><td>{item.predicted_class}</td><td>{(item.model_score * 100).toFixed(2)}%</td></tr>)}</tbody></table></div><button className="button ghost" onClick={download}>Download prediction results</button></>}</div>
   </section>;
 }
 
