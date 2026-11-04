@@ -71,6 +71,19 @@ export class MongoStore {
     );
   }
 
+  async persistDetection(detection) {
+    if (!this.connected) return false;
+    const collection = this.database.collection("detections");
+    await collection.createIndex({ detection_id: 1 }, { unique: true });
+    await collection.createIndex({ created_at: 1 });
+    await collection.replaceOne(
+      { detection_id: detection.detection_id },
+      detection,
+      { upsert: true },
+    );
+    return true;
+  }
+
   status() {
     return {
       configured: Boolean(this.uri),

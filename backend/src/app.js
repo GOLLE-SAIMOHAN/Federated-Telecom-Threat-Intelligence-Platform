@@ -149,10 +149,40 @@ export function createApp({ artifacts, mongoStore, inference = runInference }) {
     try {
       logDetection("info", "inference_call_started", { request_id: traceId });
       const result = await inference(request.body.toString("utf8"), traceId);
-      let persistence = { configured: mongoStore.status().configured, persisted: false };
-      if (result.attack_events?.length && mongoStore.persistDetectionEvents) {
-        await mongoStore.persistDetectionEvents(result.attack_events);
-        persistence = { ...persistence, persisted: mongoStore.status().connected };
+      let persistence = { configured: mongoStore.status().configured, persisted: false, status: "not_saved" };
+      try {
+        if (result.attack_events?.length && mongoStore.persistDetectionEvents) {
+          await mongoStore.persistDetectionEvents(result.attack_events);
+        }
+      } catch (error) {
+        logDetection("error", "detection_persistence_failed", {
+          request_id: traceId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
+      try {
+        if (mongoStore.persistDetection) {
+          const saved = await mongoStore.persistDetection({
+            detection_id: traceId,
+            created_at: new Date(),
+            filename: request.get("X-Filename")?.trim() || "uploaded.csv",
+            processed_rows: result.processed_rows,
+            benign_count: result.benign_count,
+            attack_count: result.attack_count,
+            summary: result.summary,
+            predictions: result.predictions,
+            model_version: result.model_version,
+            request_id: traceId,
+          });
+          persistence = { ...persistence, persisted: saved, status: saved ? "saved" : "not_saved" };
+        }
+      } catch (error) {
+        logDetection("error", "detection_persistence_failed", {
+          request_id: traceId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
       }
       logDetection("info", "detection_request_succeeded", {
         request_id: traceId,
