@@ -15,6 +15,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from scipy.special import log_expit, logsumexp
 from sklearn.linear_model import SGDClassifier
 
 
@@ -92,6 +93,32 @@ def _validate_and_transform(
     return np.asarray(transformed, dtype=np.float64), feature_columns
 
 
+def _stable_probabilities(decision_scores: np.ndarray) -> np.ndarray:
+    scores = np.asarray(decision_scores, dtype=np.float64)
+    if not np.isfinite(scores).all():
+        raise RuntimeError("The model produced non-finite decision scores.")
+    if scores.ndim == 1:
+        logits = np.column_stack((-scores, scores))
+    elif scores.ndim == 2 and scores.shape[1] == 1:
+        logits = np.column_stack((-scores[:, 0], scores[:, 0]))
+    elif scores.ndim == 2 and scores.shape[1] >= 2:
+        logits = scores
+    else:
+        raise RuntimeError("The model produced decision scores with an invalid shape.")
+    log_probabilities = log_expit(logits)
+    log_probabilities -= logsumexp(log_probabilities, axis=1, keepdims=True)
+    probabilities = np.exp(log_probabilities)
+    row_sums = probabilities.sum(axis=1)
+    if (
+        not np.isfinite(probabilities).all()
+        or np.any(probabilities < 0)
+        or np.any(probabilities > 1)
+        or not np.allclose(row_sums, 1.0, rtol=1e-7, atol=1e-12)
+    ):
+        raise RuntimeError("The model produced invalid probabilities.")
+    return probabilities
+
+
 def predict_frame(
     frame: pd.DataFrame, processed_dir: Path = DEFAULT_PROCESSED_DIR
 ) -> dict[str, Any]:
@@ -102,8 +129,10 @@ def predict_frame(
     transformed, feature_columns = _validate_and_transform(frame, artifacts)
     if len(frame) == 0:
         raise InferenceValidationError("The CSV must contain at least one data row.")
+    if not np.isfinite(transformed).all():
+        raise InferenceValidationError("The transformed input features are not finite.")
     numeric_predictions = estimator.predict(transformed)
-    probabilities = estimator.predict_proba(transformed)
+    probabilities = _stable_probabilities(estimator.decision_function(transformed))
     classes = [str(value) for value in estimator.classes_]
     predictions: list[dict[str, Any]] = []
     attack_events: list[dict[str, Any]] = []
