@@ -106,35 +106,65 @@ export function createApp({ artifacts, mongoStore, inference = runInference }) {
     response.json(artifacts.summary);
   });
 
-  app.get("/api/threats", (request, response) => {
+  app.get("/api/threats", async (request, response) => {
     const rawLimit = request.query.limit ?? "50";
     const limit = Number(rawLimit);
-    const maximumLimit = artifacts.boundedEvents.length > 0
-      ? artifacts.boundedEvents.length
-      : 50;
-    if (!Number.isInteger(limit) || limit < 1 || limit > maximumLimit) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
       response.status(400).json({
-        error: `limit must be an integer between 1 and ${maximumLimit}`,
+        error: "limit must be an integer between 1 and 50",
       });
       return;
     }
-    response.json({
-      simulated_detection_events: true,
-      limit,
-      total_available_in_local_artifact: artifacts.events.length,
-      threats: artifacts.boundedEvents.slice(0, limit),
-    });
-  });
-
-  app.get("/api/threats/:id", (request, response) => {
-    const threat = artifacts.boundedEvents.find(
-      (event) => event.threat_id === request.params.id,
-    );
-    if (!threat) {
-      response.status(404).json({ error: "Threat record not found in bounded API view" });
+    if (!mongoStore.listCtiEvents) {
+      response.json({
+        simulated_detection_events: true,
+        limit,
+        total_available_in_local_artifact: artifacts.events.length,
+        threats: artifacts.boundedEvents.slice(0, limit),
+      });
       return;
     }
-    response.json(threat);
+    try {
+      const result = await mongoStore.listCtiEvents(limit);
+      response.json({
+        simulated_detection_events: false,
+        limit,
+        total: result.total,
+        threats: result.events,
+      });
+    } catch (error) {
+      logDetection("error", "cti_event_list_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      response.status(503).json({ error: "Threat intelligence records are temporarily unavailable." });
+    }
+  });
+
+  app.get("/api/threats/:id", async (request, response) => {
+    if (!mongoStore.getCtiEvent) {
+      const threat = artifacts.boundedEvents.find(
+        (event) => event.threat_id === request.params.id,
+      );
+      if (!threat) {
+        response.status(404).json({ error: "Threat record not found in bounded API view" });
+        return;
+      }
+      response.json(threat);
+      return;
+    }
+    try {
+      const event = await mongoStore.getCtiEvent(request.params.id);
+      if (!event) {
+        response.status(404).json({ error: "Threat intelligence event not found" });
+        return;
+      }
+      response.json(event);
+    } catch (error) {
+      logDetection("error", "cti_event_retrieval_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      response.status(503).json({ error: "Threat intelligence record is temporarily unavailable." });
+    }
   });
 
   app.get("/api/detections", async (request, response) => {
@@ -243,6 +273,22 @@ export function createApp({ artifacts, mongoStore, inference = runInference }) {
             request_id: traceId,
           });
           persistence = { ...persistence, persisted: saved, status: saved ? "saved" : "not_saved" };
+          if (saved && mongoStore.persistCtiEvents) {
+            try {
+              await mongoStore.persistCtiEvents({
+                detectionId: traceId,
+                predictions: result.predictions,
+                modelVersion: result.model_version,
+                createdAt: new Date(),
+              });
+            } catch (error) {
+              logDetection("error", "cti_persistence_failed", {
+                request_id: traceId,
+                error: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              });
+            }
+          }
         }
       } catch (error) {
         logDetection("error", "detection_persistence_failed", {

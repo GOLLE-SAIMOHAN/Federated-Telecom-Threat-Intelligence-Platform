@@ -84,6 +84,76 @@ export class MongoStore {
     return true;
   }
 
+  async persistCtiEvents({ detectionId, predictions, modelVersion, createdAt }) {
+    if (!this.connected || !predictions?.length) return;
+    const eventsByAttackType = new Map();
+    for (const prediction of predictions) {
+      const attackType = prediction.predicted_class;
+      if (!attackType || attackType.toLowerCase() === "benign") continue;
+      const score = Number(prediction.model_score);
+      const current = eventsByAttackType.get(attackType) ?? {
+        scores: [],
+        predicted_count: 0,
+      };
+      current.predicted_count += 1;
+      if (Number.isFinite(score)) current.scores.push(score);
+      eventsByAttackType.set(attackType, current);
+    }
+    if (eventsByAttackType.size === 0) return;
+
+    const collection = this.database.collection("cti_events");
+    await collection.createIndex(
+      { detection_id: 1, attack_type: 1 },
+      { unique: true },
+    );
+    await collection.bulkWrite(
+      [...eventsByAttackType.entries()].map(([attackType, values]) => {
+        const scores = values.scores;
+        return {
+          updateOne: {
+            filter: { detection_id: detectionId, attack_type: attackType },
+            update: {
+              $set: {
+                event_id: `${detectionId}:${attackType}`,
+                detection_id: detectionId,
+                attack_type: attackType,
+                predicted_count: values.predicted_count,
+                average_model_score: scores.length
+                  ? scores.reduce((sum, score) => sum + score, 0) / scores.length
+                  : null,
+                maximum_model_score: scores.length ? Math.max(...scores) : null,
+                model_version: modelVersion,
+                created_at: createdAt,
+                verification_status: "model_generated_unverified",
+              },
+            },
+            upsert: true,
+          },
+        };
+      }),
+      { ordered: false },
+    );
+  }
+
+  async listCtiEvents(limit = 50) {
+    if (!this.connected) {
+      throw new Error("MongoDB is not connected");
+    }
+    const collection = this.database.collection("cti_events");
+    const [events, total] = await Promise.all([
+      collection.find({}).sort({ created_at: -1 }).limit(limit).toArray(),
+      collection.countDocuments({}),
+    ]);
+    return { events, total };
+  }
+
+  async getCtiEvent(eventId) {
+    if (!this.connected) {
+      throw new Error("MongoDB is not connected");
+    }
+    return this.database.collection("cti_events").findOne({ event_id: eventId });
+  }
+
   async listDetections({ page, limit, search, attackType }) {
     if (!this.connected) {
       throw new Error("MongoDB is not connected");
