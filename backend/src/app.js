@@ -18,6 +18,10 @@ function logDetection(level, event, details = {}) {
   console[level](JSON.stringify({ service: "backend", event, ...details }));
 }
 
+function queryStringValue(value) {
+  return typeof value === "string" ? value : null;
+}
+
 function createOperators(summary) {
   const operators = new Map();
   for (const group of summary.groups) {
@@ -131,6 +135,69 @@ export function createApp({ artifacts, mongoStore, inference = runInference }) {
       return;
     }
     response.json(threat);
+  });
+
+  app.get("/api/detections", async (request, response) => {
+    const rawPage = queryStringValue(request.query.page) ?? "1";
+    const rawLimit = queryStringValue(request.query.limit) ?? "10";
+    const page = Number(rawPage);
+    const limit = Number(rawLimit);
+    const search = queryStringValue(request.query.search)?.trim() || null;
+    const attackType = queryStringValue(request.query.attack_type)?.trim() || null;
+    if (!Number.isInteger(page) || page < 1) {
+      response.status(400).json({ error: "page must be a positive integer" });
+      return;
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      response.status(400).json({ error: "limit must be an integer between 1 and 50" });
+      return;
+    }
+    if (request.query.search !== undefined && search === null) {
+      response.status(400).json({ error: "search must be a string" });
+      return;
+    }
+    if (request.query.attack_type !== undefined && attackType === null) {
+      response.status(400).json({ error: "attack_type must be a string" });
+      return;
+    }
+    try {
+      const result = await mongoStore.listDetections({
+        page,
+        limit,
+        search,
+        attackType,
+      });
+      response.json({
+        detections: result.detections,
+        total: result.total,
+        pagination: {
+          page,
+          limit,
+          total_pages: Math.ceil(result.total / limit),
+        },
+      });
+    } catch (error) {
+      logDetection("error", "detection_list_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      response.status(503).json({ error: "Detection records are temporarily unavailable." });
+    }
+  });
+
+  app.get("/api/detections/:id", async (request, response) => {
+    try {
+      const detection = await mongoStore.getDetection(request.params.id);
+      if (!detection) {
+        response.status(404).json({ error: "Detection record not found" });
+        return;
+      }
+      response.json(detection);
+    } catch (error) {
+      logDetection("error", "detection_retrieval_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      response.status(503).json({ error: "Detection record is temporarily unavailable." });
+    }
   });
 
   app.post("/api/detection", async (request, response) => {

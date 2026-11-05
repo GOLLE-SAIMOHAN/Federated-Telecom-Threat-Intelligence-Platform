@@ -84,6 +84,42 @@ export class MongoStore {
     return true;
   }
 
+  async listDetections({ page, limit, search, attackType }) {
+    if (!this.connected) {
+      throw new Error("MongoDB is not connected");
+    }
+    const collection = this.database.collection("detections");
+    const query = {};
+    if (search) {
+      const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      query.$or = [
+        { detection_id: { $regex: escapedSearch, $options: "i" } },
+        { filename: { $regex: escapedSearch, $options: "i" } },
+      ];
+    }
+    if (attackType) {
+      query["summary.groups.attack_type"] = attackType;
+    }
+
+    const total = await collection.countDocuments(query);
+    const detections = await collection
+      .find(query, { projection: { predictions: 0 } })
+      .sort({ created_at: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
+    return { detections, total };
+  }
+
+  async getDetection(detectionId) {
+    if (!this.connected) {
+      throw new Error("MongoDB is not connected");
+    }
+    return this.database.collection("detections").findOne({
+      detection_id: detectionId,
+    });
+  }
+
   status() {
     return {
       configured: Boolean(this.uri),
