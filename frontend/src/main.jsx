@@ -10,6 +10,7 @@ const navigation = [
   ["performance", "Model Performance"],
   ["workflow", "How It Works"],
   ["detection", "Intrusion Detection"],
+  ["history", "Detection History"],
   ["threats", "Threat Intelligence"],
 ];
 const workflowStages = [
@@ -146,6 +147,80 @@ function IntrusionDetection() {
   </section>;
 }
 
+function DetectionHistory() {
+  const [detections, setDetections] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
+  const [attackType, setAttackType] = useState("");
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [detailError, setDetailError] = useState("");
+
+  const loadDetections = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ page, limit: 10 });
+      if (search.trim()) params.set("search", search.trim());
+      if (attackType) params.set("attack_type", attackType);
+      const response = await fetch(`${API_URL}/detections?${params}`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not load detection history.");
+      setDetections(body.detections ?? []);
+      setTotal(body.total ?? 0);
+      setTotalPages(body.pagination?.total_pages ?? 1);
+    } catch (reason) {
+      setError(reason.message);
+      setDetections([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDetections();
+  }, [page, search, attackType]);
+
+  const viewDetails = async (detectionId) => {
+    setDetailLoading(true);
+    setDetailError("");
+    try {
+      const response = await fetch(`${API_URL}/detections/${encodeURIComponent(detectionId)}`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not load detection details.");
+      setDetail(body);
+    } catch (reason) {
+      setDetailError(reason.message);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const attackTypes = [...new Set(detections.flatMap((detection) => (
+    detection.summary?.groups ?? detection.summary ?? []
+  ).map((group) => group.attack_type ?? group.predicted_class).filter(Boolean)))].sort();
+  const summary = detail?.summary?.groups ?? detail?.summary ?? [];
+
+  return <section id="history" className="section">
+    <SectionHeading eyebrow="Saved inference results" title="Detection History" action={<button className="button ghost" onClick={loadDetections} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</button>} />
+    {detail ? <div className="panel detection-detail">
+      <div className="panel-heading"><div><p className="eyebrow">Detection details</p><h3>{detail.filename ?? detail.detection_id}</h3></div><button className="button ghost" onClick={() => setDetail(null)}>Back to history</button></div>
+      <div className="detail-grid"><Metric label="Detection ID" value={detail.detection_id} /><Metric label="Timestamp" value={detail.created_at ? new Date(detail.created_at).toLocaleString() : "-"} /><Metric label="Model version" value={detail.model_version ?? "-"} /><Metric label="Processed" value={(detail.processed_rows ?? 0).toLocaleString()} /></div>
+      {detailError && <p className="validation-error">{detailError}</p>}
+      {detailLoading ? <p className="loading-copy">Loading detection details...</p> : <><h3>Summary</h3><div className="detection-summary">{summary.map((item, index) => <span key={`${item.attack_type ?? item.predicted_class}-${index}`}>{item.attack_type ?? item.predicted_class}: {item.count}</span>)}</div><div className="history-table"><table><thead><tr><th>Row</th><th>Prediction</th><th>Score</th></tr></thead><tbody>{(detail.predictions ?? []).map((item, index) => <tr key={item.row_number ?? index}><td>{item.row_number ?? "-"}</td><td>{item.predicted_class ?? item.attack_type ?? "-"}</td><td>{typeof item.model_score === "number" ? `${(item.model_score * 100).toFixed(2)}%` : "-"}</td></tr>)}</tbody></table></div></>}
+    </div> : <><div className="history-controls"><input value={search} placeholder="Search detection ID or filename" onChange={(event) => { setSearch(event.target.value); setPage(1); }} /><select value={attackType} onChange={(event) => { setAttackType(event.target.value); setPage(1); }}><option value="">All attack types</option>{attackTypes.map((type) => <option value={type} key={type}>{type}</option>)}</select></div>
+      {error && <div className="history-message error-copy">{error}</div>}
+      {!error && loading ? <div className="history-message">Loading detection history...</div> : !error && !detections.length ? <div className="history-message">No saved detections found.</div> : !error && <div className="history-table panel"><table><thead><tr><th>Detection ID</th><th>Date and time</th><th>Filename</th><th>Processed records</th><th>Benign</th><th>Predicted attacks</th><th>Model version</th><th>Action</th></tr></thead><tbody>{detections.map((detection) => <tr key={detection.detection_id}><td>{detection.detection_id}</td><td>{detection.created_at ? new Date(detection.created_at).toLocaleString() : "-"}</td><td>{detection.filename ?? "-"}</td><td>{(detection.processed_rows ?? 0).toLocaleString()}</td><td>{(detection.benign_count ?? 0).toLocaleString()}</td><td>{(detection.attack_count ?? 0).toLocaleString()}</td><td>{detection.model_version ?? "-"}</td><td><button className="button ghost" onClick={() => viewDetails(detection.detection_id)}>View details</button></td></tr>)}</tbody></table></div>}
+      <div className="history-pagination"><span>{total.toLocaleString()} saved record{total === 1 ? "" : "s"}</span><div><button className="button ghost" disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>Previous</button><span>Page {page} of {totalPages}</span><button className="button ghost" disabled={page >= totalPages || loading} onClick={() => setPage((current) => current + 1)}>Next</button></div></div>
+    </>}
+  </section>;
+}
+
 function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -170,6 +245,7 @@ function App() {
     <Performance centralized={centralized} iid={federated.iid} nonIid={federated.non_iid} labels={labels} />
     <Workflow />
     <IntrusionDetection />
+    <DetectionHistory />
     <section id="threats" className="section"><SectionHeading eyebrow="Threat intelligence" title="Detection events" action={<span className="badge muted">{data["threats/summary"].available ? "Available" : "Empty state"}</span>} /><div className="panel threat"><h3>{data["threats/summary"].available ? "Available threat artifacts" : "No threat event artifacts are currently available."}</h3><p>{data["threats/summary"].message}</p></div></section>
     <footer>Source: verified local experiment artifacts · In-process simulation · No raw operator records exposed</footer>
   </main>;
