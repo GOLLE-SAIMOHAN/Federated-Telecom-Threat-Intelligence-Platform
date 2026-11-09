@@ -14,6 +14,19 @@ dependencies = [
   "flwr==1.17.0",
 ]
 
+[tool.flwr.app]
+publisher = "federated-telecom-threat-intelligence"
+
+[tool.flwr.app.components]
+serverapp = "ml.federated.server_app:app"
+clientapp = "ml.federated.client_app:app"
+
+[tool.flwr.federations]
+default = "local-deployment"
+
+[tool.flwr.federations.local-deployment]
+options.num-supernodes = 1
+
 [tool.pytest.ini_options]
 testpaths = ["ml/tests", "operators/tests", "federated-server/tests"]
 addopts = "-ra"
