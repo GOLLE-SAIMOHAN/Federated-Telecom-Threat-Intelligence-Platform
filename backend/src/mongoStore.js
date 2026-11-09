@@ -1,4 +1,101 @@
 import { MongoClient } from "mongodb";
+import { isIP } from "node:net";
+
+const IOC_FIELDS = new Map([
+  ["ip.src", "ip"],
+  ["ip.dst", "ip"],
+  ["src_ip", "ip"],
+  ["dst_ip", "ip"],
+  ["source_ip", "ip"],
+  ["destination_ip", "ip"],
+  ["ipv4.src", "ip"],
+  ["ipv4.dst", "ip"],
+  ["domain", "domain"],
+  ["hostname", "domain"],
+  ["http.host", "domain"],
+  ["dns.qry.name", "domain"],
+  ["dns.resp.name", "domain"],
+  ["url", "url"],
+  ["full_url", "url"],
+  ["http.request.full_uri", "url"],
+  ["md5", "md5"],
+  ["sha1", "sha1"],
+  ["sha256", "sha256"],
+  ["file_md5", "md5"],
+  ["file_sha1", "sha1"],
+  ["file_sha256", "sha256"],
+  ["file_hash_md5", "md5"],
+  ["file_hash_sha1", "sha1"],
+  ["file_hash_sha256", "sha256"],
+  ["file.md5", "md5"],
+  ["file.sha1", "sha1"],
+  ["file.sha256", "sha256"],
+  ["file.hash.md5", "md5"],
+  ["file.hash.sha1", "sha1"],
+  ["file.hash.sha256", "sha256"],
+]);
+
+function validIoc(type, rawValue) {
+  if (typeof rawValue !== "string" && typeof rawValue !== "number") return null;
+  const value = String(rawValue).trim();
+  if (!value) return null;
+  if (type === "ip") return isIP(value) ? { value, normalizedValue: value } : null;
+  if (type === "url") {
+    try {
+      const parsed = new URL(value);
+      if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) return null;
+      return { value, normalizedValue: parsed.href };
+    } catch {
+      return null;
+    }
+  }
+  if (type === "domain") {
+    if (value.length > 253 || !/^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}\.?$/.test(value)) return null;
+    return { value, normalizedValue: value.toLowerCase().replace(/\.$/, "") };
+  }
+  const lengths = { md5: 32, sha1: 40, sha256: 64 };
+  return new RegExp(`^[a-fA-F0-9]{${lengths[type]}}$`).test(value)
+    ? { value, normalizedValue: value.toLowerCase() }
+    : null;
+}
+
+function extractIocs(predictions, detectionId, modelVersion, createdAt) {
+  const records = [];
+  const visit = (value, path, prediction, rowNumber) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    for (const [field, fieldValue] of Object.entries(value)) {
+      const fieldPath = path ? `${path}.${field}` : field;
+      const type = IOC_FIELDS.get(fieldPath) ?? IOC_FIELDS.get(field);
+      if (type) {
+        const valid = validIoc(type, fieldValue);
+        if (valid) {
+          records.push({
+            ioc_id: `${detectionId}:${rowNumber}:${type}:${valid.normalizedValue}:${fieldPath}`,
+            ioc_type: type,
+            value: valid.value,
+            normalized_value: valid.normalizedValue,
+            source_field: fieldPath,
+            detection_id: detectionId,
+            attack_type: prediction.predicted_class,
+            row_number: rowNumber,
+            model_score: Number.isFinite(Number(prediction.model_score)) ? Number(prediction.model_score) : null,
+            model_version: modelVersion,
+            created_at: createdAt,
+            verification_status: "model_generated_unverified",
+          });
+        }
+      } else if (fieldValue && typeof fieldValue === "object" && !Array.isArray(fieldValue)) {
+        visit(fieldValue, fieldPath, prediction, rowNumber);
+      }
+    }
+  };
+  for (const [index, prediction] of (predictions ?? []).entries()) {
+    const attackType = typeof prediction?.predicted_class === "string" ? prediction.predicted_class.trim() : "";
+    if (!attackType || attackType.toLowerCase() === "benign") continue;
+    visit(prediction, "", prediction, prediction.row_number ?? index + 1);
+  }
+  return records;
+}
 
 export class MongoStore {
   constructor({ uri, databaseName }) {
@@ -134,6 +231,54 @@ export class MongoStore {
       { ordered: false },
     );
   }
+
+  async persistIocs({ detectionId, predictions, modelVersion, createdAt }) {
+      if (!this.connected) return { saved: false, count: 0, status: "not_saved" };
+      const records = extractIocs(predictions, detectionId, modelVersion, createdAt);
+      if (!records.length) return { saved: false, count: 0, status: "empty" };
+      const collection = this.database.collection("iocs");
+      await collection.createIndex(
+        { detection_id: 1, ioc_type: 1, normalized_value: 1, source_field: 1, row_number: 1 },
+        { unique: true },
+      );
+      const result = await collection.bulkWrite(
+        records.map((record) => ({
+          updateOne: {
+            filter: { ioc_id: record.ioc_id },
+            update: { $set: record },
+            upsert: true,
+          },
+        })),
+        { ordered: false },
+      );
+      const count = (result.upsertedCount ?? 0) + (result.matchedCount ?? 0);
+      return { saved: count > 0, count, status: count > 0 ? "saved" : "not_saved" };
+    }
+
+  async listIocs({ page, limit, search, iocType, attackType }) {
+      if (!this.connected) throw new Error("MongoDB is not connected");
+      const collection = this.database.collection("iocs");
+      const query = { verification_status: "model_generated_unverified" };
+      if (search) {
+        const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        query.normalized_value = { $regex: escapedSearch, $options: "i" };
+      }
+      if (iocType) query.ioc_type = iocType;
+      if (attackType) query.attack_type = attackType;
+      const [total, iocs] = await Promise.all([
+        collection.countDocuments(query),
+        collection.find(query).sort({ created_at: -1 }).skip((page - 1) * limit).limit(limit).toArray(),
+      ]);
+      return { iocs, total };
+    }
+
+  async getIoc(iocId) {
+      if (!this.connected) throw new Error("MongoDB is not connected");
+      return this.database.collection("iocs").findOne({
+        ioc_id: iocId,
+        verification_status: "model_generated_unverified",
+      });
+    }
 
   async listCtiEvents(limit = 50) {
     if (!this.connected) {

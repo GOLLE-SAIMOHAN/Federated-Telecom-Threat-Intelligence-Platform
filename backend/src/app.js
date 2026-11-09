@@ -163,6 +163,51 @@ export function createApp({ artifacts, mongoStore, inference = runInference }) {
       logDetection("error", "cti_event_retrieval_failed", {
         error: error instanceof Error ? error.message : String(error),
       });
+
+      app.get("/api/iocs", async (request, response) => {
+        const page = Number(queryStringValue(request.query.page) ?? "1");
+        const limit = Number(queryStringValue(request.query.limit) ?? "20");
+        const search = queryStringValue(request.query.search)?.trim() || null;
+        const iocType = queryStringValue(request.query.ioc_type)?.trim() || null;
+        const attackType = queryStringValue(request.query.attack_type)?.trim() || null;
+        if (!Number.isInteger(page) || page < 1) {
+          response.status(400).json({ error: "page must be a positive integer" });
+          return;
+        }
+        if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+          response.status(400).json({ error: "limit must be an integer between 1 and 50" });
+          return;
+        }
+        try {
+          const result = await mongoStore.listIocs({ page, limit, search, iocType, attackType });
+          response.json({
+            iocs: result.iocs,
+            total: result.total,
+            pagination: { page, limit, total_pages: Math.ceil(result.total / limit) },
+          });
+        } catch (error) {
+          logDetection("error", "ioc_list_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          response.status(503).json({ error: "IOC records are temporarily unavailable." });
+        }
+      });
+
+      app.get("/api/iocs/:id", async (request, response) => {
+        try {
+          const ioc = await mongoStore.getIoc(request.params.id);
+          if (!ioc) {
+            response.status(404).json({ error: "IOC record not found" });
+            return;
+          }
+          response.json(ioc);
+        } catch (error) {
+          logDetection("error", "ioc_retrieval_failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          response.status(503).json({ error: "IOC record is temporarily unavailable." });
+        }
+      });
       response.status(503).json({ error: "Threat intelligence record is temporarily unavailable." });
     }
   });
@@ -287,6 +332,24 @@ export function createApp({ artifacts, mongoStore, inference = runInference }) {
                 error: error instanceof Error ? error.message : String(error),
                 stack: error instanceof Error ? error.stack : undefined,
               });
+            }
+          }
+          if (saved && mongoStore.persistIocs) {
+            try {
+              const iocPersistence = await mongoStore.persistIocs({
+                detectionId: traceId,
+                predictions: result.predictions,
+                modelVersion: result.model_version,
+                createdAt: new Date(),
+              });
+              persistence = { ...persistence, iocs: iocPersistence };
+            } catch (error) {
+              logDetection("error", "ioc_persistence_failed", {
+                request_id: traceId,
+                error: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              });
+              persistence = { ...persistence, iocs: { saved: false, count: 0, status: "failed" } };
             }
           }
         }
