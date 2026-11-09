@@ -221,6 +221,72 @@ function DetectionHistory() {
   </section>;
 }
 
+function ThreatIntelligence() {
+  const [events, setEvents] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [attackType, setAttackType] = useState("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadEvents = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_URL}/threats?limit=50`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not load threat intelligence records.");
+      if (body.simulated_detection_events !== false) {
+        throw new Error("Threat intelligence endpoint is not returning MongoDB CTI events.");
+      }
+      setEvents(Array.isArray(body.threats) ? body.threats : []);
+      setTotal(Number.isInteger(body.total) ? body.total : body.threats?.length ?? 0);
+      setSelected(null);
+    } catch (reason) {
+      setEvents([]);
+      setTotal(0);
+      setError(reason instanceof Error ? reason.message : "Could not load threat intelligence records.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadEvents(); }, []);
+
+  const attackTypes = [...new Set(events.map((event) => event.attack_type).filter(Boolean))].sort();
+  const filteredEvents = events.filter((event) => {
+    const matchesType = !attackType || event.attack_type === attackType;
+    const query = search.trim().toLowerCase();
+    return matchesType && (!query || `${event.attack_type ?? ""} ${event.detection_id ?? ""}`.toLowerCase().includes(query));
+  });
+  const detectionCount = new Set(events.map((event) => event.detection_id).filter(Boolean)).size;
+  const unverifiedCount = events.filter((event) => event.verification_status === "model_generated_unverified").length;
+
+  if (selected) {
+    return <section id="threats" className="section">
+      <SectionHeading eyebrow="Threat intelligence" title="Event details" action={<button className="button ghost" onClick={() => setSelected(null)}>Back to events</button>} />
+      <div className="panel threat-detail">
+        <div className="callout">Model-generated · Unverified</div>
+        <dl className="threat-fields">{Object.entries(selected).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === "object" ? JSON.stringify(value) : String(value ?? "-")}</dd></div>)}</dl>
+      </div>
+    </section>;
+  }
+
+  return <section id="threats" className="section">
+    <SectionHeading eyebrow="Threat intelligence" title="MongoDB CTI events" action={<><span className="badge">Model-generated · Unverified</span><button className="button ghost" onClick={loadEvents} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</button></>} />
+    {error ? <div className="history-message error-copy">{error}</div> : loading ? <div className="history-message">Loading MongoDB CTI events...</div> : <><div className="grid threat-metrics">
+      <div className="panel"><Metric label="Total threat events" value={total.toLocaleString()} /></div>
+      <div className="panel"><Metric label="Unique attack categories" value={attackTypes.length.toLocaleString()} /></div>
+      <div className="panel"><Metric label="Detection records represented" value={detectionCount.toLocaleString()} /></div>
+      <div className="panel"><Metric label="Unverified model-generated events" value={unverifiedCount.toLocaleString()} /></div>
+    </div>
+    {!events.length ? <div className="history-message">No MongoDB CTI events are available.</div> : <><div className="history-controls"><input value={search} placeholder="Search attack type or detection ID" onChange={(event) => setSearch(event.target.value)} /><select value={attackType} onChange={(event) => setAttackType(event.target.value)}><option value="">All attack types</option>{attackTypes.map((type) => <option value={type} key={type}>{type}</option>)}</select></div>
+      {!filteredEvents.length ? <div className="history-message">No CTI events match the current filters.</div> : <div className="history-table panel"><table><thead><tr><th>Attack type</th><th>Predicted event count</th><th>Average model score</th><th>Maximum model score</th><th>Detection ID</th><th>Model version</th><th>Creation timestamp</th><th>Verification status</th><th>Action</th></tr></thead><tbody>{filteredEvents.map((event) => <tr key={event.event_id ?? `${event.detection_id}-${event.attack_type}`}><td>{event.attack_type ?? "-"}</td><td>{event.predicted_count ?? "-"}</td><td>{typeof event.average_model_score === "number" ? event.average_model_score.toFixed(4) : "-"}</td><td>{typeof event.maximum_model_score === "number" ? event.maximum_model_score.toFixed(4) : "-"}</td><td>{event.detection_id ?? "-"}</td><td>{event.model_version ?? "-"}</td><td>{event.created_at ? new Date(event.created_at).toLocaleString() : "-"}</td><td><span className="status">Model-generated · Unverified</span></td><td><button className="button ghost" onClick={() => setSelected(event)}>View details</button></td></tr>)}</tbody></table></div>}
+    </>}</>}
+  </section>;
+}
+
 function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -246,7 +312,7 @@ function App() {
     <Workflow />
     <IntrusionDetection />
     <DetectionHistory />
-    <section id="threats" className="section"><SectionHeading eyebrow="Threat intelligence" title="Detection events" action={<span className="badge muted">{data["threats/summary"].available ? "Available" : "Empty state"}</span>} /><div className="panel threat"><h3>{data["threats/summary"].available ? "Available threat artifacts" : "No threat event artifacts are currently available."}</h3><p>{data["threats/summary"].message}</p></div></section>
+    <ThreatIntelligence />
     <footer>Source: verified local experiment artifacts · In-process simulation · No raw operator records exposed</footer>
   </main>;
 }
