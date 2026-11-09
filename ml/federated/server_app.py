@@ -67,9 +67,9 @@ def server_fn(context: Context) -> ServerAppComponents:
     strategy = FedAvg(
         fraction_fit=1.0,
         fraction_evaluate=1.0,
-        min_fit_clients=1,
-        min_evaluate_clients=1,
-        min_available_clients=1,
+        min_fit_clients=4,
+        min_evaluate_clients=4,
+        min_available_clients=4,
         initial_parameters=initial_parameters,
         fit_metrics_aggregation_fn=_aggregate_fit_metrics,
     )

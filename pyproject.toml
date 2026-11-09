@@ -25,7 +25,9 @@ clientapp = "ml.federated.client_app:app"
 default = "local-deployment"
 
 [tool.flwr.federations.local-deployment]
-options.num-supernodes = 1
+address = "127.0.0.1:9093"
+insecure = true
+options.num-supernodes = 4
 
 [tool.pytest.ini_options]
 testpaths = ["ml/tests", "operators/tests", "federated-server/tests"]

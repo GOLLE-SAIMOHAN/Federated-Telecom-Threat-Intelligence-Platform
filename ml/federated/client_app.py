@@ -40,18 +40,20 @@ def client_fn(context: Context):
     )
     partition_mode = str(context.run_config.get("partition-mode", "iid"))
     partition_id = int(context.node_config.get("partition-id", 0))
-    if partition_id != 0:
-        raise ValueError("The first network proof supports only Operator A (partition 0).")
+    if partition_id not in range(4):
+        raise ValueError("The local network proof supports partition IDs 0 through 3.")
+    operator_name = f"Operator {chr(ord('A') + partition_id)}"
+    operator_stem = f"operator_{chr(ord('a') + partition_id)}"
 
     artifacts = joblib.load(processed_dir / "artifacts" / "preprocessing.joblib")
     data = np.load(
         processed_dir
         / "operator_partitions"
-        / f"{partition_mode}_operator_a.npz"
+        / f"{partition_mode}_{operator_stem}.npz"
     )
     classes = np.arange(len(artifacts["label_encoder"].classes_))
     return NetworkFederatedClient(
-        "Operator A",
+        operator_name,
         data["features"],
         data["labels"],
         classes,
